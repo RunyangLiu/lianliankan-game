@@ -1,0 +1,1009 @@
+import { Lightbulb, RotateCcw, Settings, Shuffle, TimerReset, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  applyShiftAfterRemove,
+  countAvailableMatches,
+  countRemainingTiles,
+  createBoard,
+  difficultyList,
+  ensurePlayableBoard,
+  findAnyMatch,
+  getShiftInstructionText,
+  levelList,
+  removePair,
+  searchConnectPath,
+  shuffleBoard,
+  shuffleBoardForShiftMode,
+  tileDeck,
+  type Board,
+  type Cell,
+  type LevelConfig,
+} from "./game";
+import {
+  addLeaderboardEntry,
+  isNicknameTaken,
+  loadPlayerNickname,
+  loadLeaderboards,
+  normalizeNickname,
+  saveLeaderboards,
+  savePlayerNickname,
+  type LeaderboardEntry,
+  type Leaderboards,
+} from "./leaderboard";
+import {
+  fetchOnlineLeaderboards,
+  getOnlineLeaderboardConfig,
+  submitOnlineLeaderboardEntry,
+} from "./onlineLeaderboard";
+import { playMatchSound, setBackgroundMusicQuiet, startBackgroundMusic, stopBackgroundMusic } from "./sound";
+
+type BannerTone = "neutral" | "good" | "warn";
+
+type Banner = {
+  text: string;
+  tone: BannerTone;
+};
+
+const tileById = new Map(tileDeck.map((tile, index) => [tile.id, { ...tile, index }]));
+
+const palette = [
+  "#f6d7e5",
+  "#d8ecff",
+  "#dbf2df",
+  "#fff1cc",
+  "#e5dcfb",
+  "#ffdccc",
+  "#d7eff0",
+  "#ffe1d6",
+];
+
+const initialBanner: Banner = {
+  text: "开局",
+  tone: "neutral",
+};
+
+const maxHintsPerRound = 3;
+const backgroundMusicStorageKey = "guoquduiduixiao-background-music-v1";
+const soundEffectsStorageKey = "guoquduiduixiao-sound-effects-v1";
+
+type GamePhase = "loading" | "nickname" | "playing";
+
+type LeaderboardStatus = "local" | "loading" | "online" | "error";
+
+function loadBooleanSetting(key: string, fallback: boolean): boolean {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? fallback : raw === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function saveBooleanSetting(key: string, value: boolean) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // 设置保存失败不影响本局游戏。
+  }
+}
+
+function formatTime(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function cellKey(cell: Cell): string {
+  return `${cell.row}-${cell.col}`;
+}
+
+function getTileColor(tileId: string): string {
+  const index = tileById.get(tileId)?.index ?? 0;
+  return palette[index % palette.length];
+}
+
+function isNicknameTakenInAnyDifficulty(leaderboards: Leaderboards, nickname: string): boolean {
+  return difficultyList.some((difficulty) => isNicknameTaken(leaderboards, difficulty.id, nickname));
+}
+
+function connectPathToSvgPath(path: Cell[]): string {
+  return path
+    .map((cell, index) => `${index === 0 ? "M" : "L"} ${cell.col + 0.5} ${cell.row + 0.5}`)
+    .join(" ");
+}
+
+export function App({
+  loadingMs: _loadingMs = 3000,
+  initialLevelIndex = 0,
+}: {
+  loadingMs?: number;
+  initialLevelIndex?: number;
+} = {}) {
+  const startingLevelIndex = Math.min(Math.max(initialLevelIndex, 0), levelList.length - 1);
+  const startingDifficulty = levelList[startingLevelIndex];
+  const [levelIndex, setLevelIndex] = useState(startingLevelIndex);
+  const [difficulty, setDifficulty] = useState<LevelConfig>(startingDifficulty);
+  const [board, setBoard] = useState<Board>(() => createBoard(startingDifficulty));
+  const [phase, setPhase] = useState<GamePhase>("loading");
+  const [loadingComplete, setLoadingComplete] = useState(_loadingMs <= 0);
+  const [savedNickname, setSavedNickname] = useState(() => loadPlayerNickname());
+  const [nicknameInput, setNicknameInput] = useState(() => loadPlayerNickname());
+  const [playerName, setPlayerName] = useState("");
+  const [setupError, setSetupError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [backgroundMusicEnabled, setBackgroundMusicEnabled] = useState(() => loadBooleanSetting(backgroundMusicStorageKey, true));
+  const [soundEffectsEnabled, setSoundEffectsEnabled] = useState(() => loadBooleanSetting(soundEffectsStorageKey, true));
+  const [leaderboards, setLeaderboards] = useState<Leaderboards>(() => loadLeaderboards());
+  const [leaderboardStatus, setLeaderboardStatus] = useState<LeaderboardStatus>(() =>
+    getOnlineLeaderboardConfig() ? "loading" : "local",
+  );
+  const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
+  const [hintCells, setHintCells] = useState<Cell[] | null>(null);
+  const [clearingCells, setClearingCells] = useState<Cell[] | null>(null);
+  const [connectPath, setConnectPath] = useState<Cell[] | null>(null);
+  const [banner, setBanner] = useState<Banner>(initialBanner);
+  const [moves, setMoves] = useState(0);
+  const [seconds, setSeconds] = useState(0);
+  const [hintsRemaining, setHintsRemaining] = useState(maxHintsPerRound);
+  const [completionModalOpen, setCompletionModalOpen] = useState(false);
+  const [deadlockModalOpen, setDeadlockModalOpen] = useState(false);
+  const [shiftRuleLevel, setShiftRuleLevel] = useState<LevelConfig | null>(null);
+
+  const clearTimerRef = useRef<number | null>(null);
+  const hintTimerRef = useRef<number | null>(null);
+  const onlineLeaderboardConfig = useMemo(() => getOnlineLeaderboardConfig(), []);
+
+  const remainingTiles = useMemo(() => countRemainingTiles(board), [board]);
+  const remainingPairs = remainingTiles / 2;
+  const isComplete = remainingTiles === 0;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLoadingComplete(true), _loadingMs);
+    return () => window.clearTimeout(timer);
+  }, [_loadingMs]);
+
+  useEffect(() => {
+    saveBooleanSetting(backgroundMusicStorageKey, backgroundMusicEnabled);
+
+    if (!backgroundMusicEnabled) {
+      void stopBackgroundMusic();
+      return;
+    }
+
+    if (phase === "playing" && !isComplete) {
+      void startBackgroundMusic();
+      void setBackgroundMusicQuiet(true);
+      return;
+    }
+
+    void startBackgroundMusic();
+    void setBackgroundMusicQuiet(false);
+  }, [backgroundMusicEnabled, isComplete, phase]);
+
+  useEffect(() => {
+    const stopAudio = () => {
+      void stopBackgroundMusic();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        stopAudio();
+      }
+    };
+
+    window.addEventListener("pagehide", stopAudio);
+    window.addEventListener("beforeunload", stopAudio);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pagehide", stopAudio);
+      window.removeEventListener("beforeunload", stopAudio);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      stopAudio();
+    };
+  }, []);
+
+  useEffect(() => {
+    saveBooleanSetting(soundEffectsStorageKey, soundEffectsEnabled);
+  }, [soundEffectsEnabled]);
+
+  useEffect(() => {
+    if (phase !== "playing" || isComplete) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setSeconds((current) => current + 1);
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [isComplete, phase]);
+
+  useEffect(() => {
+    if (!onlineLeaderboardConfig) {
+      return;
+    }
+
+    const config = onlineLeaderboardConfig;
+    let isActive = true;
+
+    async function loadOnlineLeaderboards() {
+      try {
+        setLeaderboardStatus("loading");
+        const onlineLeaderboards = await fetchOnlineLeaderboards(config);
+
+        if (!isActive) {
+          return;
+        }
+
+        setLeaderboards(onlineLeaderboards);
+        setLeaderboardStatus("online");
+      } catch {
+        if (!isActive) {
+          return;
+        }
+
+        setLeaderboardStatus("error");
+      }
+    }
+
+    void loadOnlineLeaderboards();
+
+    return () => {
+      isActive = false;
+    };
+  }, [onlineLeaderboardConfig]);
+
+  useEffect(() => {
+    return () => {
+      if (clearTimerRef.current) {
+        window.clearTimeout(clearTimerRef.current);
+      }
+
+      if (hintTimerRef.current) {
+        window.clearTimeout(hintTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isComplete) {
+      setBanner({ text: "通关了", tone: "good" });
+    }
+  }, [isComplete]);
+
+  function resetRound(nextDifficulty = difficulty, nextBanner = initialBanner) {
+    if (clearTimerRef.current) {
+      window.clearTimeout(clearTimerRef.current);
+    }
+
+    if (hintTimerRef.current) {
+      window.clearTimeout(hintTimerRef.current);
+    }
+
+    setBoard(createBoard(nextDifficulty));
+    setSelectedCell(null);
+    setHintCells(null);
+    setClearingCells(null);
+    setConnectPath(null);
+    setBanner(nextBanner);
+    setMoves(0);
+    setSeconds(0);
+    setHintsRemaining(maxHintsPerRound);
+    setCompletionModalOpen(false);
+    setDeadlockModalOpen(false);
+    setShiftRuleLevel(null);
+  }
+
+  function handleLoadingStart() {
+    if (!loadingComplete) {
+      return;
+    }
+
+    if (backgroundMusicEnabled) {
+      void startBackgroundMusic();
+    }
+
+    const currentNickname = loadPlayerNickname();
+
+    if (currentNickname) {
+      setSavedNickname(currentNickname);
+      setNicknameInput(currentNickname);
+      setPlayerName(currentNickname);
+      void handleStartGame(difficulty, currentNickname);
+      return;
+    }
+
+    setPhase("nickname");
+  }
+
+  async function handleNicknameSubmit() {
+    const nextName = nicknameInput.trim();
+
+    if (!nextName) {
+      setSetupError("请输入昵称");
+      return;
+    }
+
+    let currentLeaderboards = leaderboards;
+
+    if (onlineLeaderboardConfig) {
+      try {
+        setLeaderboardStatus("loading");
+        currentLeaderboards = await fetchOnlineLeaderboards(onlineLeaderboardConfig);
+        setLeaderboards(currentLeaderboards);
+        setLeaderboardStatus("online");
+      } catch {
+        setLeaderboardStatus("error");
+        currentLeaderboards = loadLeaderboards();
+      }
+    }
+
+    const currentSavedNickname = savedNickname || loadPlayerNickname();
+    const isSavedNickname =
+      currentSavedNickname && normalizeNickname(currentSavedNickname) === normalizeNickname(nextName);
+
+    if (!isSavedNickname && isNicknameTakenInAnyDifficulty(currentLeaderboards, nextName)) {
+      setSetupError("当前昵称已存在，请修改");
+      return;
+    }
+
+    savePlayerNickname(nextName);
+    setSavedNickname(nextName);
+    setPlayerName(nextName);
+    setNicknameInput(nextName);
+    setSetupError("");
+    await handleStartGame(difficulty, nextName);
+  }
+
+  async function handleStartGame(nextDifficulty: LevelConfig = difficulty, forcedName?: string) {
+    const nextName = (forcedName || playerName || savedNickname || nicknameInput).trim();
+
+    if (!nextName) {
+      setPhase("nickname");
+      setSetupError("请输入昵称");
+      return;
+    }
+
+    let currentLeaderboards = leaderboards;
+
+    if (onlineLeaderboardConfig) {
+      try {
+        setLeaderboardStatus("loading");
+        currentLeaderboards = await fetchOnlineLeaderboards(onlineLeaderboardConfig);
+        setLeaderboards(currentLeaderboards);
+        setLeaderboardStatus("online");
+      } catch {
+        setLeaderboardStatus("error");
+        currentLeaderboards = loadLeaderboards();
+      }
+    }
+
+    const isSavedNickname = savedNickname && normalizeNickname(savedNickname) === normalizeNickname(nextName);
+
+    if (!isSavedNickname && isNicknameTaken(currentLeaderboards, nextDifficulty.id, nextName)) {
+      setSetupError("当前昵称已存在，请修改");
+      setPhase("nickname");
+      return;
+    }
+
+    savePlayerNickname(nextName);
+    setSavedNickname(nextName);
+    setPlayerName(nextName);
+    setSetupError("");
+    setDifficulty(nextDifficulty);
+    setLevelIndex(nextDifficulty.level - 1);
+    if (backgroundMusicEnabled) {
+      void startBackgroundMusic();
+      void setBackgroundMusicQuiet(true);
+    }
+    resetRound(nextDifficulty);
+    setPhase("playing");
+    if (nextDifficulty.shiftMode !== "none") {
+      setShiftRuleLevel(nextDifficulty);
+    }
+  }
+
+  async function recordCompletion(finalSeconds: number, finalMoves: number) {
+    const entry: LeaderboardEntry = {
+      nickname: playerName,
+      seconds: finalSeconds,
+      moves: finalMoves,
+      completedAt: new Date().toISOString(),
+    };
+
+    if (onlineLeaderboardConfig) {
+      try {
+        const nextLeaderboards = await submitOnlineLeaderboardEntry(onlineLeaderboardConfig, difficulty.id, entry);
+        setLeaderboards(nextLeaderboards);
+        setLeaderboardStatus("online");
+        return;
+      } catch {
+        setLeaderboardStatus("error");
+      }
+    }
+
+    const nextLeaderboards = addLeaderboardEntry(leaderboards, difficulty.id, entry);
+    setLeaderboards(nextLeaderboards);
+    saveLeaderboards(nextLeaderboards);
+  }
+
+  function getNextLevel(): LevelConfig {
+    return levelList[Math.min(levelIndex + 1, levelList.length - 1)];
+  }
+
+  function handleNextLevel() {
+    const nextLevel = getNextLevel();
+    setCompletionModalOpen(false);
+    void handleStartGame(nextLevel);
+  }
+
+  function handleCellClick(cell: Cell) {
+    const tileId = board[cell.row][cell.col];
+
+    if (!tileId || isComplete || clearingCells || deadlockModalOpen) {
+      return;
+    }
+
+    if (selectedCell && selectedCell.row === cell.row && selectedCell.col === cell.col) {
+      setSelectedCell(null);
+      return;
+    }
+
+    if (!selectedCell) {
+      setSelectedCell(cell);
+      setHintCells(null);
+      setConnectPath(null);
+      return;
+    }
+
+    const selectedTileId = board[selectedCell.row][selectedCell.col];
+
+    if (!selectedTileId) {
+      setSelectedCell(cell);
+      return;
+    }
+
+    if (selectedTileId !== tileId) {
+      setSelectedCell(cell);
+      setHintCells(null);
+      setConnectPath(null);
+      setBanner({ text: "换一个相同图案试试", tone: "warn" });
+      return;
+    }
+
+    const matchedPath = searchConnectPath(board, selectedCell, cell);
+
+    if (!matchedPath) {
+      setSelectedCell(cell);
+      setConnectPath(null);
+      setBanner({ text: "这条路还不通", tone: "warn" });
+      return;
+    }
+
+    const removedBoard = removePair(board, selectedCell, cell);
+    const nextBoard = applyShiftAfterRemove(removedBoard, [selectedCell, cell], difficulty.shiftMode);
+    const finalMoves = moves + 1;
+    setMoves((current) => current + 1);
+    setClearingCells([selectedCell, cell]);
+    setConnectPath(matchedPath);
+    setHintCells(null);
+    setBanner({ text: "消掉一对", tone: "good" });
+    setSelectedCell(null);
+    if (soundEffectsEnabled) {
+      void playMatchSound();
+    }
+
+    clearTimerRef.current = window.setTimeout(() => {
+      const hasNoMatch = countRemainingTiles(nextBoard) > 0 && !findAnyMatch(nextBoard);
+      const shouldAskForRefresh = difficulty.level >= 5 && hasNoMatch;
+      const playableBoard = difficulty.level >= 5 ? nextBoard : ensurePlayableBoard(nextBoard);
+      const wasDeadlocked = difficulty.level < 5 && playableBoard !== nextBoard;
+
+      setBoard(playableBoard);
+      setClearingCells(null);
+      setConnectPath(null);
+
+      if (countRemainingTiles(playableBoard) === 0) {
+        void recordCompletion(seconds, finalMoves);
+        setCompletionModalOpen(true);
+        setBanner({ text: "通关了，查看排行榜", tone: "good" });
+        void setBackgroundMusicQuiet(false);
+      } else if (shouldAskForRefresh) {
+        setDeadlockModalOpen(true);
+        setBanner({ text: "当前无可消除块，请点击刷新", tone: "warn" });
+      } else if (wasDeadlocked) {
+        setBanner({ text: "无路可走，已自动洗牌", tone: "neutral" });
+      }
+    }, 160);
+  }
+
+  function handleHint() {
+    if (isComplete || clearingCells) {
+      return;
+    }
+
+    if (hintsRemaining <= 0) {
+      setBanner({ text: "提示已用完", tone: "warn" });
+      return;
+    }
+
+    const pair = findAnyMatch(board);
+
+    if (!pair) {
+      if (difficulty.level >= 5) {
+        setDeadlockModalOpen(true);
+      }
+      setBanner({ text: "暂时没有可连的对", tone: "warn" });
+      return;
+    }
+
+    const nextHintsRemaining = hintsRemaining - 1;
+    setHintCells([pair.start, pair.end]);
+    setHintsRemaining(nextHintsRemaining);
+    setBanner({ text: nextHintsRemaining === 0 ? "提示已用完" : "提示已显示", tone: "neutral" });
+
+    if (hintTimerRef.current) {
+      window.clearTimeout(hintTimerRef.current);
+    }
+
+    hintTimerRef.current = window.setTimeout(() => {
+      setHintCells(null);
+    }, 1400);
+  }
+
+  function handleShuffle() {
+    if (isComplete || clearingCells) {
+      return;
+    }
+
+    if (clearTimerRef.current) {
+      window.clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = null;
+    }
+
+    setBoard((currentBoard) => {
+      const nextBoard =
+        difficulty.level >= 5 ? shuffleBoardForShiftMode(currentBoard, difficulty.shiftMode) : shuffleBoard(currentBoard);
+
+      if (difficulty.level >= 5 && countAvailableMatches(nextBoard) === 0) {
+        setDeadlockModalOpen(true);
+        setBanner({ text: "当前无可消除块，请点击刷新", tone: "warn" });
+        return currentBoard;
+      }
+
+      setDeadlockModalOpen(false);
+      return nextBoard;
+    });
+    setSelectedCell(null);
+    setHintCells(null);
+    setConnectPath(null);
+    setBanner({ text: difficulty.level >= 5 ? "已按当前进度刷新" : "已重新整理", tone: "neutral" });
+  }
+
+  const statusToneClass = banner.tone === "good" ? "is-good" : banner.tone === "warn" ? "is-warn" : "";
+  const boardRows = board.length;
+  const boardCols = board[0]?.length ?? 1;
+  const activeLeaderboard = leaderboards[difficulty.id];
+  const settingsDialog = (
+    <SettingsDialog
+      open={settingsOpen}
+      backgroundMusicEnabled={backgroundMusicEnabled}
+      soundEffectsEnabled={soundEffectsEnabled}
+      onClose={() => setSettingsOpen(false)}
+      onToggleBackgroundMusic={() => setBackgroundMusicEnabled((current) => !current)}
+      onToggleSoundEffects={() => setSoundEffectsEnabled((current) => !current)}
+    />
+  );
+
+  if (phase === "loading") {
+    return (
+      <>
+        <LoadingScreen
+          loadingComplete={loadingComplete}
+          onStart={handleLoadingStart}
+          onSettings={() => setSettingsOpen(true)}
+        />
+        {settingsDialog}
+      </>
+    );
+  }
+
+  if (phase === "nickname") {
+    return (
+      <>
+        <main className="app-shell setup-shell nickname-shell">
+          <section className="setup-panel" aria-label="玩家信息">
+            <div className="title-block">
+              <p className="eyebrow">果趣对对消</p>
+              <h1>输入昵称</h1>
+            </div>
+
+            <label className="name-field">
+              <span>昵称</span>
+              <input
+                aria-label="昵称"
+                maxLength={12}
+                value={nicknameInput}
+                onChange={(event) => {
+                  setNicknameInput(event.target.value);
+                  setSetupError("");
+                }}
+              />
+            </label>
+
+            {setupError ? (
+              <p className="setup-error" role="alert">
+                {setupError}
+              </p>
+            ) : null}
+
+            <button className="start-button" type="button" onClick={handleNicknameSubmit}>
+              确认昵称
+            </button>
+          </section>
+        </main>
+        {settingsDialog}
+      </>
+    );
+  }
+
+  return (
+    <>
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="title-block">
+          <p className="eyebrow">果趣对对消 · {difficulty.subtitle}</p>
+          <h1>{difficulty.label}</h1>
+        </div>
+
+        <button className="settings-button in-game corner-left" type="button" aria-label="设置" onClick={() => setSettingsOpen(true)}>
+          <Settings aria-hidden="true" size={20} />
+        </button>
+
+        <div className="status-strip" aria-label="游戏统计">
+          <div className="stat-chip">
+            <span>时间</span>
+            <strong>{formatTime(seconds)}</strong>
+          </div>
+          <div className="stat-chip">
+            <span>步数</span>
+            <strong>{moves}</strong>
+          </div>
+          <div className="stat-chip">
+            <span>剩余</span>
+            <strong>{remainingPairs} 对</strong>
+          </div>
+        </div>
+
+        <div className="level-progress" aria-label="关卡进度">
+          {levelList.map((item) => (
+            <span key={`${item.level}-${item.subtitle}`} className={item.level <= difficulty.level ? "is-unlocked" : ""}>
+              {item.level}
+            </span>
+          ))}
+        </div>
+      </header>
+
+      <section className="play-area">
+        <div className="board-shell">
+          <div
+            className="board-grid"
+            role="grid"
+            aria-label="果趣对对消棋盘"
+            style={
+              {
+                "--board-cols": boardCols,
+                "--board-rows": boardRows,
+              } as CSSProperties
+            }
+          >
+            {connectPath ? (
+              <svg className="connect-line" data-testid="connect-line" viewBox={`0 0 ${boardCols} ${boardRows}`} aria-hidden="true">
+                <path d={connectPathToSvgPath(connectPath)} />
+              </svg>
+            ) : null}
+            {board.map((row, rowIndex) =>
+              row.map((tileId, colIndex) => {
+                const cell = { row: rowIndex, col: colIndex };
+                const tile = tileId ? tileById.get(tileId) : null;
+                const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === colIndex;
+                const isHinted = hintCells?.some((hint) => hint.row === rowIndex && hint.col === colIndex) ?? false;
+                const isClearing = clearingCells?.some((hint) => hint.row === rowIndex && hint.col === colIndex) ?? false;
+
+                return (
+                  <button
+                    key={cellKey(cell)}
+                    aria-label={tile ? `${tile.label}` : "空格"}
+                    aria-pressed={isSelected}
+                    className={[
+                      "tile",
+                      isSelected ? "is-selected" : "",
+                      isHinted ? "is-hint" : "",
+                      isClearing ? "is-clearing" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    style={
+                      tile
+                        ? ({
+                            "--tile-color": getTileColor(tileId as string),
+                          } as CSSProperties)
+                        : undefined
+                    }
+                    disabled={!tile || Boolean(clearingCells) || isComplete}
+                    type="button"
+                    onClick={() => handleCellClick(cell)}
+                  >
+                    {tile ? <span aria-hidden="true">{tile.emoji}</span> : null}
+                  </button>
+                );
+              }),
+            )}
+          </div>
+        </div>
+
+        <aside className="control-rail">
+          <p className={`banner ${statusToneClass}`} role="status" aria-live="polite">
+            {banner.text}
+          </p>
+
+          <div className="player-card">
+            <span>玩家</span>
+            <strong>{playerName}</strong>
+          </div>
+
+          <div className="controls">
+            <button
+              className="control-button"
+              type="button"
+              onClick={handleHint}
+              disabled={Boolean(clearingCells) || isComplete || hintsRemaining <= 0}
+            >
+              <Lightbulb aria-hidden="true" size={18} />
+              <span className="capybara-icon" aria-hidden="true">🦫</span>
+              提示 {hintsRemaining}
+            </button>
+            <button className="control-button" type="button" onClick={handleShuffle} disabled={Boolean(clearingCells) || isComplete}>
+              <Shuffle aria-hidden="true" size={18} />
+              <span className="capybara-icon" aria-hidden="true">🦫</span>
+              刷新
+            </button>
+            <button className="control-button" type="button" onClick={() => resetRound()}>
+              <RotateCcw aria-hidden="true" size={18} />
+              重开
+            </button>
+            <button className="control-button secondary" type="button" onClick={() => resetRound()}>
+              <TimerReset aria-hidden="true" size={18} />
+              新一局
+            </button>
+          </div>
+
+        </aside>
+      </section>
+    </main>
+    <CompletionDialog
+      open={completionModalOpen}
+      entries={activeLeaderboard}
+      title={`${difficulty.label}排行榜`}
+      status={leaderboardStatus}
+      isFinalLevel={levelIndex >= levelList.length - 1}
+      onClose={handleNextLevel}
+    />
+    <DeadlockDialog open={deadlockModalOpen} onRefresh={handleShuffle} />
+    <ShiftRuleDialog level={shiftRuleLevel} onClose={() => setShiftRuleLevel(null)} />
+    {settingsDialog}
+    </>
+  );
+}
+
+function LoadingScreen({
+  loadingComplete,
+  onStart,
+  onSettings,
+}: {
+  loadingComplete: boolean;
+  onStart: () => void;
+  onSettings: () => void;
+}) {
+  return (
+    <main className="loading-screen" aria-label="果趣对对消加载中">
+      <button className="settings-button loading-settings" type="button" aria-label="设置" onClick={onSettings}>
+        <Settings aria-hidden="true" size={22} />
+      </button>
+      <div className="loading-cloud cloud-one" />
+      <div className="loading-cloud cloud-two" />
+      <div className="fruit-logo" aria-hidden="true">
+        <span className="fruit fruit-a">🍉</span>
+        <span className="fruit fruit-b">🫐</span>
+        <span className="fruit fruit-c">🍊</span>
+        <strong>
+          <span>果趣</span>
+          <span>对对消</span>
+        </strong>
+      </div>
+      <div className="loading-field" aria-hidden="true">
+        <span className="flower flower-a">✿</span>
+        <span className="flower flower-b">✿</span>
+        <span className="flower flower-c">✿</span>
+      </div>
+      {loadingComplete ? (
+        <button className="loading-start-button" type="button" onClick={onStart}>
+          开始游戏
+        </button>
+      ) : null}
+      <div className="loading-bar" role="progressbar" aria-label="加载进度">
+        <span />
+      </div>
+      <div className="healthy-notice" aria-label="健康游戏忠告">
+        <strong>健康游戏忠告</strong>
+        <p>抵制不良游戏　拒绝盗版游戏　注意自我保护　谨防受骗上当</p>
+        <p>适度游戏益脑　沉迷游戏伤身　合理安排时间　享受健康生活</p>
+      </div>
+    </main>
+  );
+}
+
+function SettingsDialog({
+  open,
+  backgroundMusicEnabled,
+  soundEffectsEnabled,
+  onClose,
+  onToggleBackgroundMusic,
+  onToggleSoundEffects,
+}: {
+  open: boolean;
+  backgroundMusicEnabled: boolean;
+  soundEffectsEnabled: boolean;
+  onClose: () => void;
+  onToggleBackgroundMusic: () => void;
+  onToggleSoundEffects: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="设置">
+      <section className="settings-panel">
+        <div className="settings-title">
+          <h2>设置</h2>
+          <button className="settings-close" type="button" aria-label="关闭设置" onClick={onClose}>
+            <X aria-hidden="true" size={20} />
+          </button>
+        </div>
+        <button className="setting-row" type="button" role="switch" aria-checked={backgroundMusicEnabled} onClick={onToggleBackgroundMusic}>
+          <span>背景音乐</span>
+          <strong>{backgroundMusicEnabled ? "开" : "关"}</strong>
+        </button>
+        <button className="setting-row" type="button" role="switch" aria-checked={soundEffectsEnabled} onClick={onToggleSoundEffects}>
+          <span>按键音效</span>
+          <strong>{soundEffectsEnabled ? "开" : "关"}</strong>
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function CompletionDialog({
+  open,
+  entries,
+  title,
+  status,
+  isFinalLevel,
+  onClose,
+}: {
+  open: boolean;
+  entries: LeaderboardEntry[];
+  title: string;
+  status: LeaderboardStatus;
+  isFinalLevel: boolean;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="通关排行榜">
+      <section className="completion-panel">
+        <div className="completion-hero" aria-hidden="true">
+          🍉 🏆 🍍
+        </div>
+        <LeaderboardPanel entries={entries} title={title} status={status} />
+        <button className="start-button" type="button" onClick={onClose}>
+          {isFinalLevel ? "再玩一局" : "进入下一关"}
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function DeadlockDialog({ open, onRefresh }: { open: boolean; onRefresh: () => void }) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="当前无可消除块">
+      <section className="deadlock-panel">
+        <div className="deadlock-icon" aria-hidden="true">
+          🔄
+        </div>
+        <h2>当前无可消除块</h2>
+        <p>请点击刷新，系统会保留当前已消除进度，只重排剩余块。</p>
+        <button className="start-button" type="button" onClick={onRefresh}>
+          刷新
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function ShiftRuleDialog({ level, onClose }: { level: LevelConfig | null; onClose: () => void }) {
+  if (!level) {
+    return null;
+  }
+
+  return (
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="关卡规则提示">
+      <section className="shift-rule-panel">
+        <div className="shift-rule-icon" aria-hidden="true">
+          🍉
+        </div>
+        <h2>{level.label}规则</h2>
+        <p>{getShiftInstructionText(level.shiftMode)}</p>
+        <button className="start-button" type="button" onClick={onClose}>
+          知道了
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function getLeaderboardStatusText(status: LeaderboardStatus): string {
+  if (status === "online") {
+    return "在线";
+  }
+
+  if (status === "loading") {
+    return "同步中";
+  }
+
+  if (status === "error") {
+    return "本地备用";
+  }
+
+  return "本地";
+}
+
+function LeaderboardPanel({
+  entries,
+  title,
+  status,
+}: {
+  entries: LeaderboardEntry[];
+  title: string;
+  status: LeaderboardStatus;
+}) {
+  return (
+    <section className="leaderboard" aria-label={title}>
+      <div className="leaderboard-title">
+        <h2>{title}</h2>
+        <span>{getLeaderboardStatusText(status)}</span>
+      </div>
+      {entries.length === 0 ? (
+        <p className="empty-rank">暂无排行</p>
+      ) : (
+        <ol>
+          {entries.map((entry) => (
+            <li key={`${entry.nickname}-${entry.completedAt}`}>
+              <span>{entry.nickname}</span>
+              <strong>{formatTime(entry.seconds)}</strong>
+              <em>{entry.moves}步</em>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}

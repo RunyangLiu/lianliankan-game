@@ -663,6 +663,39 @@ h1 {
   animation: line-pop 160ms ease both;
 }
 
+.praise-pop {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  top: 34%;
+  pointer-events: none;
+  color: #ff2f7d;
+  font-size: clamp(26px, 9vw, 58px);
+  font-weight: 950;
+  line-height: 1;
+  text-shadow:
+    0 2px 0 #ffffff,
+    0 5px 16px rgba(249, 115, 22, 0.42);
+  transform: translate(-50%, -50%);
+  animation: praise-pop 900ms cubic-bezier(0.2, 0.9, 0.22, 1) both;
+}
+
+.praise-pop-1 {
+  color: #16a34a;
+}
+
+.praise-pop-2 {
+  color: #0284c7;
+}
+
+.praise-pop-3 {
+  color: #f97316;
+}
+
+.praise-pop-4 {
+  color: #7c3aed;
+}
+
 .tile {
   position: relative;
   z-index: 1;
@@ -1105,6 +1138,10 @@ h1 {
   .connect-line path {
     animation: none;
   }
+
+  .praise-pop {
+    animation: none;
+  }
 }
 
 @keyframes line-pop {
@@ -1116,6 +1153,28 @@ h1 {
   to {
     opacity: 1;
     stroke-width: 0.08;
+  }
+}
+
+@keyframes praise-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -28%) scale(0.62) rotate(-5deg);
+  }
+
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -62%) scale(1.15) rotate(3deg);
+  }
+
+  62% {
+    opacity: 1;
+    transform: translate(-50%, -86%) scale(1) rotate(-1deg);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -122%) scale(0.9) rotate(4deg);
   }
 }
 

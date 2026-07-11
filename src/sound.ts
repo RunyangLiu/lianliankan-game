@@ -153,44 +153,79 @@ export async function playMatchSound(): Promise<void> {
   }
 
   const now = context.currentTime;
-  const gain = context.createGain();
-  const oscillator = context.createOscillator();
-  const popGain = context.createGain();
-  const pop = context.createOscillator();
+  const duration = 0.22;
+  const sampleCount = Math.floor(context.sampleRate * duration);
+  const noiseBuffer = context.createBuffer(1, sampleCount, context.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
 
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.28, now + 0.018);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+  for (let index = 0; index < sampleCount; index += 1) {
+    const decay = 1 - index / sampleCount;
+    noiseData[index] = (Math.random() * 2 - 1) * decay;
+  }
 
-  oscillator.type = "square";
-  oscillator.frequency.setValueAtTime(720, now);
-  oscillator.frequency.exponentialRampToValueAtTime(1560, now + 0.16);
+  const noise = context.createBufferSource();
+  const noiseFilter = context.createBiquadFilter();
+  const noiseGain = context.createGain();
+  const zap = context.createOscillator();
+  const zapGain = context.createGain();
+  const spark = context.createOscillator();
+  const sparkGain = context.createGain();
 
-  popGain.gain.setValueAtTime(0.0001, now + 0.08);
-  popGain.gain.exponentialRampToValueAtTime(0.18, now + 0.1);
-  popGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+  noise.buffer = noiseBuffer;
+  noiseFilter.type = "bandpass";
+  noiseFilter.frequency.setValueAtTime(2300, now);
+  noiseFilter.frequency.exponentialRampToValueAtTime(7600, now + duration);
+  noiseFilter.Q.setValueAtTime(8, now);
 
-  pop.type = "triangle";
-  pop.frequency.setValueAtTime(1180, now + 0.08);
-  pop.frequency.exponentialRampToValueAtTime(520, now + 0.22);
+  noiseGain.gain.setValueAtTime(0.0001, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.24, now + 0.012);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-  oscillator.connect(gain);
-  gain.connect(context.destination);
-  pop.connect(popGain);
-  popGain.connect(context.destination);
+  zap.type = "sawtooth";
+  zap.frequency.setValueAtTime(1300, now);
+  zap.frequency.exponentialRampToValueAtTime(4200, now + 0.08);
+  zap.frequency.exponentialRampToValueAtTime(880, now + duration);
 
-  oscillator.start(now);
-  oscillator.stop(now + 0.28);
-  pop.start(now + 0.08);
-  pop.stop(now + 0.26);
+  zapGain.gain.setValueAtTime(0.0001, now);
+  zapGain.gain.exponentialRampToValueAtTime(0.16, now + 0.018);
+  zapGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-  oscillator.onended = () => {
-    oscillator.disconnect();
-    gain.disconnect();
+  spark.type = "square";
+  spark.frequency.setValueAtTime(2800, now + 0.035);
+  spark.frequency.exponentialRampToValueAtTime(6200, now + 0.13);
+
+  sparkGain.gain.setValueAtTime(0.0001, now + 0.035);
+  sparkGain.gain.exponentialRampToValueAtTime(0.11, now + 0.05);
+  sparkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(context.destination);
+  zap.connect(zapGain);
+  zapGain.connect(context.destination);
+  spark.connect(sparkGain);
+  sparkGain.connect(context.destination);
+
+  noise.start(now);
+  noise.stop(now + duration);
+  zap.start(now);
+  zap.stop(now + duration + 0.02);
+  spark.start(now + 0.035);
+  spark.stop(now + 0.17);
+
+  noise.onended = () => {
+    noise.disconnect();
+    noiseFilter.disconnect();
+    noiseGain.disconnect();
   };
 
-  pop.onended = () => {
-    pop.disconnect();
-    popGain.disconnect();
+  zap.onended = () => {
+    zap.disconnect();
+    zapGain.disconnect();
+  };
+
+  spark.onended = () => {
+    spark.disconnect();
+    sparkGain.disconnect();
   };
 }

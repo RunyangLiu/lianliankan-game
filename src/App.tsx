@@ -63,6 +63,7 @@ const initialBanner: Banner = {
 };
 
 const maxHintsPerRound = 3;
+const praiseWords = ["好", "棒", "牛", "完美", "神了", "绝了", "太酷了"] as const;
 const backgroundMusicStorageKey = "guoquduiduixiao-background-music-v1";
 const soundEffectsStorageKey = "guoquduiduixiao-sound-effects-v1";
 
@@ -148,9 +149,12 @@ export function App({
   const [completionModalOpen, setCompletionModalOpen] = useState(false);
   const [deadlockModalOpen, setDeadlockModalOpen] = useState(false);
   const [shiftRuleLevel, setShiftRuleLevel] = useState<LevelConfig | null>(null);
+  const [praisePop, setPraisePop] = useState<{ id: number; text: string; variant: number } | null>(null);
 
   const clearTimerRef = useRef<number | null>(null);
   const hintTimerRef = useRef<number | null>(null);
+  const praiseTimerRef = useRef<number | null>(null);
+  const praiseIndexRef = useRef(0);
   const onlineLeaderboardConfig = useMemo(() => getOnlineLeaderboardConfig(), []);
 
   const remainingTiles = useMemo(() => countRemainingTiles(board), [board]);
@@ -262,8 +266,28 @@ export function App({
       if (hintTimerRef.current) {
         window.clearTimeout(hintTimerRef.current);
       }
+
+      if (praiseTimerRef.current) {
+        window.clearTimeout(praiseTimerRef.current);
+      }
     };
   }, []);
+
+  function showPraisePop() {
+    const nextIndex = praiseIndexRef.current;
+    const text = praiseWords[nextIndex % praiseWords.length];
+    praiseIndexRef.current = nextIndex + 1;
+
+    if (praiseTimerRef.current) {
+      window.clearTimeout(praiseTimerRef.current);
+    }
+
+    setPraisePop({ id: nextIndex, text, variant: nextIndex % 5 });
+    praiseTimerRef.current = window.setTimeout(() => {
+      setPraisePop(null);
+      praiseTimerRef.current = null;
+    }, 900);
+  }
 
   useEffect(() => {
     if (isComplete) {
@@ -280,11 +304,17 @@ export function App({
       window.clearTimeout(hintTimerRef.current);
     }
 
+    if (praiseTimerRef.current) {
+      window.clearTimeout(praiseTimerRef.current);
+      praiseTimerRef.current = null;
+    }
+
     setBoard(createBoard(nextDifficulty));
     setSelectedCell(null);
     setHintCells(null);
     setClearingCells(null);
     setConnectPath(null);
+    setPraisePop(null);
     setBanner(nextBanner);
     setMoves(0);
     setSeconds(0);
@@ -488,6 +518,7 @@ export function App({
     setConnectPath(matchedPath);
     setHintCells(null);
     setBanner({ text: "消掉一对", tone: "good" });
+    showPraisePop();
     setSelectedCell(null);
     if (soundEffectsEnabled) {
       void playMatchSound();
@@ -701,6 +732,16 @@ export function App({
               <svg className="connect-line" data-testid="connect-line" viewBox={`0 0 ${boardCols} ${boardRows}`} aria-hidden="true">
                 <path d={connectPathToSvgPath(connectPath)} />
               </svg>
+            ) : null}
+            {praisePop ? (
+              <div
+                key={praisePop.id}
+                className={`praise-pop praise-pop-${praisePop.variant}`}
+                data-testid="praise-pop"
+                aria-live="polite"
+              >
+                {praisePop.text}
+              </div>
             ) : null}
             {board.map((row, rowIndex) =>
               row.map((tileId, colIndex) => {

@@ -178,6 +178,7 @@ describe("App", () => {
 
     expect(await screen.findByText("消掉一对")).toBeVisible();
     expect(screen.getByTestId("connect-line")).toBeVisible();
+    expect(await screen.findByTestId("praise-pop")).toHaveTextContent(/^(好|棒|牛|完美|神了|绝了|太酷了)$/);
     await waitFor(() => expect(screen.getByText("9 对")).toBeVisible());
     expect(playMatchSound).toHaveBeenCalled();
   });

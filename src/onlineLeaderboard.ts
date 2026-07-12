@@ -1,4 +1,11 @@
-import { addLeaderboardEntry, createEmptyLeaderboards, normalizeNickname, type LeaderboardEntry, type Leaderboards } from "./leaderboard";
+import {
+  addLeaderboardEntry,
+  createEmptyLeaderboards,
+  normalizeNickname,
+  validateNickname,
+  type LeaderboardEntry,
+  type Leaderboards,
+} from "./leaderboard";
 import { type DifficultyId } from "./game";
 
 export type OnlineLeaderboardConfig = {
@@ -106,6 +113,12 @@ export async function submitOnlineLeaderboardEntry(
   entry: LeaderboardEntry,
   fetcher: Fetcher = fetch,
 ): Promise<Leaderboards> {
+  const nicknameCheck = validateNickname(entry.nickname);
+
+  if (!nicknameCheck.ok) {
+    throw new Error(nicknameCheck.message);
+  }
+
   const nicknameKey = normalizeNickname(entry.nickname);
   const filter = `difficulty=eq.${encodeFilterValue(difficultyId)}&nickname_key=eq.${encodeFilterValue(nicknameKey)}`;
   const existingResponse = await fetcher(getTableUrl(config, `?select=seconds,moves&${filter}&limit=1`), {

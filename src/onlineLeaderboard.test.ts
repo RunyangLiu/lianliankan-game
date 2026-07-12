@@ -66,7 +66,7 @@ describe("online leaderboard", () => {
     await submitOnlineLeaderboardEntry(
       config,
       "easy",
-      { nickname: "小云", seconds: 60, moves: 22, completedAt: "2026-07-10T00:00:00.000Z" },
+      { nickname: "Player1", seconds: 60, moves: 22, completedAt: "2026-07-10T00:00:00.000Z" },
       fetcher,
     );
 
@@ -86,11 +86,26 @@ describe("online leaderboard", () => {
     await submitOnlineLeaderboardEntry(
       config,
       "normal",
-      { nickname: "小云", seconds: 60, moves: 22, completedAt: "2026-07-10T00:00:00.000Z" },
+      { nickname: "Player1", seconds: 60, moves: 22, completedAt: "2026-07-10T00:00:00.000Z" },
       fetcher,
     );
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("rejects invalid nicknames before talking to Supabase", async () => {
+    const fetcher = vi.fn();
+
+    await expect(
+      submitOnlineLeaderboardEntry(
+        config,
+        "normal",
+        { nickname: "阿晴", seconds: 60, moves: 22, completedAt: "2026-07-10T00:00:00.000Z" },
+        fetcher,
+      ),
+    ).rejects.toThrow("昵称不能包含中文");
+
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

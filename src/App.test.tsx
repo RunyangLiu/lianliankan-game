@@ -36,7 +36,7 @@ describe("App", () => {
     cleanup();
   });
 
-  async function startGame(name = "玩家一") {
+  async function startGame(name = "PlayerOne") {
     const user = userEvent.setup();
     render(<App loadingMs={0} />);
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
@@ -74,11 +74,12 @@ describe("App", () => {
 
   it("rejects a duplicate nickname before difficulty selection", async () => {
     const user = userEvent.setup();
+    window.localStorage.setItem("guoquduiduixiao-user-data-reset-v1", "true");
     window.localStorage.setItem(
       "lianliankan-leaderboards-v1",
       JSON.stringify({
         easy: [],
-        normal: [{ nickname: "阿晴", seconds: 30, moves: 10, completedAt: "2026-07-10T00:00:00.000Z" }],
+        normal: [{ nickname: "PlayerOne", seconds: 30, moves: 10, completedAt: "2026-07-10T00:00:00.000Z" }],
         hard: [],
       }),
     );
@@ -86,23 +87,36 @@ describe("App", () => {
     render(<App loadingMs={0} />);
 
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
-    await user.type(screen.getByLabelText("昵称"), "阿晴");
+    await user.type(screen.getByLabelText("昵称"), "PlayerOne");
     await user.click(screen.getByRole("button", { name: "确认昵称" }));
 
     expect(screen.getByText("当前昵称已存在，请修改")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "第1关" })).not.toBeInTheDocument();
   });
 
+  it("rejects Chinese nicknames before starting the game", async () => {
+    const user = userEvent.setup();
+    render(<App loadingMs={0} />);
+
+    await user.click(screen.getByRole("button", { name: "开始游戏" }));
+    await user.type(screen.getByLabelText("昵称"), "阿晴");
+    await user.click(screen.getByRole("button", { name: "确认昵称" }));
+
+    expect(screen.getByText("昵称不能包含中文")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "第1关" })).not.toBeInTheDocument();
+  });
+
   it("saves the nickname after confirmation and skips nickname next time", async () => {
     const user = userEvent.setup();
+    window.localStorage.setItem("guoquduiduixiao-user-data-reset-v1", "true");
     const { unmount } = render(<App loadingMs={0} />);
 
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
-    await user.type(screen.getByLabelText("昵称"), "彩果新人");
+    await user.type(screen.getByLabelText("昵称"), "FruitNew1");
     await user.click(screen.getByRole("button", { name: "确认昵称" }));
 
     expect(screen.getByRole("heading", { name: "第1关" })).toBeVisible();
-    expect(window.localStorage.getItem("guoquduiduixiao-player-nickname-v1")).toBe("彩果新人");
+    expect(window.localStorage.getItem("guoquduiduixiao-player-nickname-v1")).toBe("FruitNew1");
 
     unmount();
     render(<App loadingMs={0} />);
@@ -114,12 +128,13 @@ describe("App", () => {
 
   it("reuses the saved nickname and lets the same player continue", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem("guoquduiduixiao-player-nickname-v1", "阿晴");
+    window.localStorage.setItem("guoquduiduixiao-user-data-reset-v1", "true");
+    window.localStorage.setItem("guoquduiduixiao-player-nickname-v1", "PlayerOne");
     window.localStorage.setItem(
       "lianliankan-leaderboards-v1",
       JSON.stringify({
         easy: [],
-        normal: [{ nickname: "阿晴", seconds: 30, moves: 10, completedAt: "2026-07-10T00:00:00.000Z" }],
+        normal: [{ nickname: "PlayerOne", seconds: 30, moves: 10, completedAt: "2026-07-10T00:00:00.000Z" }],
         hard: [],
       }),
     );
@@ -129,7 +144,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
 
     expect(screen.getByRole("heading", { name: "第1关" })).toBeVisible();
-    expect(screen.getAllByText("阿晴").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("PlayerOne").length).toBeGreaterThan(0);
   });
 
   it("opens settings and toggles the two sound switches", async () => {
@@ -230,7 +245,7 @@ describe("App", () => {
     render(<App loadingMs={0} initialLevelIndex={4} />);
 
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
-    await user.type(screen.getByLabelText("昵称"), "移动测试");
+    await user.type(screen.getByLabelText("昵称"), "MoveTest1");
     await user.click(screen.getByRole("button", { name: "确认昵称" }));
 
     expect(screen.getByRole("dialog", { name: "关卡规则提示" })).toBeVisible();

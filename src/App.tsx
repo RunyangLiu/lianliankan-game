@@ -27,6 +27,7 @@ import {
   normalizeNickname,
   saveLeaderboards,
   savePlayerNickname,
+  validateNickname,
   type LeaderboardEntry,
   type Leaderboards,
 } from "./leaderboard";
@@ -349,8 +350,10 @@ export function App({
   async function handleNicknameSubmit() {
     const nextName = nicknameInput.trim();
 
-    if (!nextName) {
-      setSetupError("请输入昵称");
+    const nicknameCheck = validateNickname(nextName);
+
+    if (!nicknameCheck.ok) {
+      setSetupError(nicknameCheck.message);
       return;
     }
 
@@ -387,10 +390,11 @@ export function App({
 
   async function handleStartGame(nextDifficulty: LevelConfig = difficulty, forcedName?: string) {
     const nextName = (forcedName || playerName || savedNickname || nicknameInput).trim();
+    const nicknameCheck = validateNickname(nextName);
 
-    if (!nextName) {
+    if (!nicknameCheck.ok) {
       setPhase("nickname");
-      setSetupError("请输入昵称");
+      setSetupError(nicknameCheck.message);
       return;
     }
 

@@ -1,5 +1,5 @@
-import { Lightbulb, RotateCcw, Settings, Shuffle, TimerReset, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Lightbulb, MessageSquareText, RotateCcw, Settings, Shuffle, TimerReset, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import {
   applyShiftAfterRemove,
   countAvailableMatches,
@@ -67,6 +67,8 @@ const maxHintsPerRound = 3;
 const praiseWords = ["好", "棒", "牛", "完美", "神了", "绝了", "太酷了"] as const;
 const backgroundMusicStorageKey = "guoquduiduixiao-background-music-v1";
 const soundEffectsStorageKey = "guoquduiduixiao-sound-effects-v1";
+const feedbackPromptedStorageKey = "guoquduiduixiao-feedback-prompted-v1";
+const feedbackStorageKey = "guoquduiduixiao-feedback-list-v1";
 
 type GamePhase = "loading" | "nickname" | "playing";
 
@@ -86,6 +88,32 @@ function saveBooleanSetting(key: string, value: boolean) {
     window.localStorage.setItem(key, String(value));
   } catch {
     // 设置保存失败不影响本局游戏。
+  }
+}
+
+function hasPromptedForFeedback(): boolean {
+  try {
+    return window.localStorage.getItem(feedbackPromptedStorageKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function markFeedbackPrompted() {
+  try {
+    window.localStorage.setItem(feedbackPromptedStorageKey, "true");
+  } catch {
+    // 提示记录失败不影响继续游戏。
+  }
+}
+
+function saveFeedbackText(text: string) {
+  try {
+    const raw = window.localStorage.getItem(feedbackStorageKey);
+    const entries = raw ? (JSON.parse(raw) as string[]) : [];
+    window.localStorage.setItem(feedbackStorageKey, JSON.stringify([...entries, text]));
+  } catch {
+    // 意见保存失败时只保留页面提示，避免中断玩家流程。
   }
 }
 
@@ -151,6 +179,9 @@ export function App({
   const [deadlockModalOpen, setDeadlockModalOpen] = useState(false);
   const [shiftRuleLevel, setShiftRuleLevel] = useState<LevelConfig | null>(null);
   const [praisePop, setPraisePop] = useState<{ id: number; text: string; variant: number } | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
 
   const clearTimerRef = useRef<number | null>(null);
   const hintTimerRef = useRef<number | null>(null);
@@ -465,10 +496,54 @@ export function App({
     return levelList[Math.min(levelIndex + 1, levelList.length - 1)];
   }
 
+  function openFeedbackDialog(isAutoPrompt = false) {
+    if (isAutoPrompt) {
+      markFeedbackPrompted();
+      setFeedbackMessage("玩到这里，可以顺手写一点意见。");
+    } else {
+      setFeedbackMessage("");
+    }
+
+    setFeedbackOpen(true);
+  }
+
+  function closeFeedbackDialog() {
+    setFeedbackOpen(false);
+    setFeedbackMessage("");
+  }
+
+  function handleFeedbackSubmit() {
+    const text = feedbackText.trim();
+
+    if (!text) {
+      setFeedbackMessage("先写一点内容再提交");
+      return;
+    }
+
+    saveFeedbackText(text);
+    setFeedbackText("");
+    setFeedbackMessage("已收到，后面会按玩家反馈继续改。");
+  }
+
   function handleNextLevel() {
     const nextLevel = getNextLevel();
+    const shouldPromptForFeedback = difficulty.level === 5 && !hasPromptedForFeedback();
+
     setCompletionModalOpen(false);
-    void handleStartGame(nextLevel);
+    void handleStartGame(nextLevel).then(() => {
+      if (shouldPromptForFeedback) {
+        openFeedbackDialog(true);
+      }
+    });
+  }
+
+  function handleTilePointerDown(event: PointerEvent<HTMLButtonElement>, cell: Cell) {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+
+    event.preventDefault();
+    handleCellClick(cell);
   }
 
   function handleCellClick(cell: Cell) {
@@ -777,6 +852,7 @@ export function App({
                     }
                     disabled={!tile || Boolean(clearingCells) || isComplete}
                     type="button"
+                    onPointerDown={(event) => handleTilePointerDown(event, cell)}
                     onClick={() => handleCellClick(cell)}
                   >
                     {tile ? <span aria-hidden="true">{tile.emoji}</span> : null}
@@ -821,6 +897,10 @@ export function App({
               <TimerReset aria-hidden="true" size={18} />
               新一局
             </button>
+            <button className="control-button feedback-button" type="button" onClick={() => openFeedbackDialog()}>
+              <MessageSquareText aria-hidden="true" size={18} />
+              意见栏
+            </button>
           </div>
 
         </aside>
@@ -836,6 +916,14 @@ export function App({
     />
     <DeadlockDialog open={deadlockModalOpen} onRefresh={handleShuffle} />
     <ShiftRuleDialog level={shiftRuleLevel} onClose={() => setShiftRuleLevel(null)} />
+    <FeedbackDialog
+      open={feedbackOpen}
+      text={feedbackText}
+      message={feedbackMessage}
+      onTextChange={setFeedbackText}
+      onSubmit={handleFeedbackSubmit}
+      onClose={closeFeedbackDialog}
+    />
     {settingsDialog}
     </>
   );
@@ -924,6 +1012,60 @@ function SettingsDialog({
           <span>按键音效</span>
           <strong>{soundEffectsEnabled ? "开" : "关"}</strong>
         </button>
+      </section>
+    </div>
+  );
+}
+
+function FeedbackDialog({
+  open,
+  text,
+  message,
+  onTextChange,
+  onSubmit,
+  onClose,
+}: {
+  open: boolean;
+  text: string;
+  message: string;
+  onTextChange: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="意见栏">
+      <section className="feedback-panel">
+        <div className="settings-title">
+          <h2>意见栏</h2>
+          <button className="settings-close" type="button" aria-label="关闭意见栏" onClick={onClose}>
+            <X aria-hidden="true" size={20} />
+          </button>
+        </div>
+        <p>请给游戏提点意见，或者写下需要改进的地方。</p>
+        <textarea
+          aria-label="意见内容"
+          maxLength={200}
+          value={text}
+          onChange={(event) => onTextChange(event.target.value)}
+          placeholder="比如关卡难度、图案大小、音效、排行榜等..."
+        />
+        {message ? (
+          <p className="feedback-message" role="status">
+            {message}
+          </p>
+        ) : null}
+        <div className="feedback-actions">
+          <button className="start-button" type="button" onClick={onSubmit}>
+            提交意见
+          </button>
+          <button className="control-button secondary" type="button" onClick={onClose}>
+            稍后再说
+          </button>
+        </div>
       </section>
     </div>
   );

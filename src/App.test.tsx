@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -28,6 +28,12 @@ vi.mock("./sound", () => ({
   setBackgroundMusicQuiet: vi.fn(),
   startBackgroundMusic: vi.fn(),
   stopBackgroundMusic: vi.fn(),
+}));
+
+vi.mock("./onlineLeaderboard", () => ({
+  fetchOnlineLeaderboards: vi.fn(),
+  getOnlineLeaderboardConfig: vi.fn(() => null),
+  submitOnlineLeaderboardEntry: vi.fn(),
 }));
 
 describe("App", () => {
@@ -196,6 +202,28 @@ describe("App", () => {
     expect(await screen.findByTestId("praise-pop")).toHaveTextContent(/^(好|棒|牛|完美|神了|绝了|太酷了)$/);
     await waitFor(() => expect(screen.getByText("9 对")).toBeVisible());
     expect(playMatchSound).toHaveBeenCalled();
+  });
+
+  it("removes a matched pair from touch pointer input without extra taps", async () => {
+    await startGame();
+
+    const pairLabel = tileDeck[0].label;
+    const pairButtons = screen.getAllByRole("button", { name: pairLabel });
+
+    fireEvent.pointerDown(pairButtons[0], { pointerType: "touch" });
+    fireEvent.pointerDown(pairButtons[1], { pointerType: "touch" });
+
+    expect(await screen.findByText("消掉一对")).toBeVisible();
+    await waitFor(() => expect(screen.getByText("9 对")).toBeVisible());
+  });
+
+  it("opens the feedback dialog from the feedback button", async () => {
+    const user = await startGame();
+
+    await user.click(screen.getByRole("button", { name: "意见栏" }));
+
+    expect(screen.getByRole("dialog", { name: "意见栏" })).toBeVisible();
+    expect(screen.getByLabelText("意见内容")).toBeVisible();
   });
 
   it("limits hints to three times in one round", async () => {

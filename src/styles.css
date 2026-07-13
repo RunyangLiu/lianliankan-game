@@ -822,7 +822,7 @@ h1 {
 
 .controls {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: clamp(8px, 3vw, 24px);
   align-items: end;
   padding: 0 8px;
@@ -887,6 +887,11 @@ h1 {
   background: linear-gradient(180deg, #a88cff, #673de0);
 }
 
+.control-button.feedback-button {
+  background: linear-gradient(180deg, #38d9b7, #0891b2);
+  box-shadow: 0 8px 0 #075985, 0 12px 22px rgba(22, 35, 54, 0.22);
+}
+
 .control-button:hover:not(:disabled) {
   border-color: rgba(15, 118, 110, 0.32);
 }
@@ -927,6 +932,56 @@ h1 {
 
 .deadlock-icon {
   font-size: 40px;
+}
+
+.feedback-panel {
+  display: grid;
+  gap: 12px;
+  width: min(92vw, 430px);
+  padding: 18px;
+  border: 3px solid rgba(21, 128, 61, 0.34);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(255, 218, 91, 0.35), transparent 20%),
+    linear-gradient(180deg, #ffffff, #eefcff 58%, #f4ffd9);
+  color: #274052;
+  box-shadow: 0 24px 60px rgba(14, 25, 36, 0.28);
+}
+
+.feedback-panel p {
+  margin: 0;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.feedback-panel textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: 12px;
+  border: 2px solid rgba(8, 145, 178, 0.24);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #193244;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  outline: none;
+}
+
+.feedback-panel textarea:focus {
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.14);
+}
+
+.feedback-message {
+  color: #047857;
+}
+
+.feedback-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
 }
 
 .shift-rule-panel {

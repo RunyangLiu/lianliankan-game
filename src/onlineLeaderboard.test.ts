@@ -27,8 +27,13 @@ describe("online leaderboard", () => {
         VITE_SUPABASE_ANON_KEY: " key ",
       }),
     ).toEqual({ url: config.url, anonKey: "key" });
+  });
 
-    expect(getOnlineLeaderboardConfig({})).toBeNull();
+  it("keeps online leaderboard enabled when GitHub Pages has no Vite env values", () => {
+    expect(getOnlineLeaderboardConfig({})).toEqual({
+      url: "https://elvhilpbpndlwoeusyxt.supabase.co",
+      anonKey: "sb_publishable_chldC7aD5kZ1TQZxUSNE_g_ljefum4x",
+    });
   });
 
   it("loads online rows into separate difficulty rankings", async () => {

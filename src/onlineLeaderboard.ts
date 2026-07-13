@@ -36,10 +36,12 @@ type ExistingScoreRow = {
 };
 
 const scoresTable = "lianliankan_scores";
+const defaultSupabaseUrl = "https://elvhilpbpndlwoeusyxt.supabase.co";
+const defaultSupabaseAnonKey = "sb_publishable_chldC7aD5kZ1TQZxUSNE_g_ljefum4x";
 
 export function getOnlineLeaderboardConfig(env: EnvValues = import.meta.env): OnlineLeaderboardConfig | null {
-  const url = env.VITE_SUPABASE_URL?.trim();
-  const anonKey = env.VITE_SUPABASE_ANON_KEY?.trim();
+  const url = env.VITE_SUPABASE_URL?.trim() || defaultSupabaseUrl;
+  const anonKey = env.VITE_SUPABASE_ANON_KEY?.trim() || defaultSupabaseAnonKey;
 
   if (!url || !anonKey) {
     return null;

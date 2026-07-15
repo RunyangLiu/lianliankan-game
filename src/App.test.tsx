@@ -1,8 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { levelList, tileDeck } from "./game";
+import { fetchOnlineLeaderboards } from "./onlineLeaderboard";
+import { submitOnlineFeedback } from "./onlineFeedback";
 import { playMatchSound } from "./sound";
 
 vi.mock("./game", async () => {
@@ -31,14 +33,23 @@ vi.mock("./sound", () => ({
 }));
 
 vi.mock("./onlineLeaderboard", () => ({
-  fetchOnlineLeaderboards: vi.fn(),
-  getOnlineLeaderboardConfig: vi.fn(() => null),
+  fetchOnlineLeaderboards: vi.fn().mockResolvedValue({ easy: [], normal: [], hard: [] }),
+  getOnlineLeaderboardConfig: vi.fn(() => ({ url: "https://example.supabase.co", anonKey: "public-key" })),
   submitOnlineLeaderboardEntry: vi.fn(),
 }));
 
+vi.mock("./onlineFeedback", () => ({
+  submitOnlineFeedback: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe("App", () => {
+  beforeEach(() => {
+    vi.mocked(fetchOnlineLeaderboards).mockResolvedValue({ easy: [], normal: [], hard: [] });
+  });
+
   afterEach(() => {
     window.localStorage.clear();
+    vi.clearAllMocks();
     cleanup();
   });
 
@@ -80,15 +91,11 @@ describe("App", () => {
 
   it("rejects a duplicate nickname before difficulty selection", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem("guoquduiduixiao-user-data-reset-v1", "true");
-    window.localStorage.setItem(
-      "lianliankan-leaderboards-v1",
-      JSON.stringify({
+    vi.mocked(fetchOnlineLeaderboards).mockResolvedValue({
         easy: [],
         normal: [{ nickname: "PlayerOne", seconds: 30, moves: 10, completedAt: "2026-07-10T00:00:00.000Z" }],
         hard: [],
-      }),
-    );
+    });
 
     render(<App loadingMs={0} />);
 
@@ -224,6 +231,25 @@ describe("App", () => {
 
     expect(screen.getByRole("dialog", { name: "意见栏" })).toBeVisible();
     expect(screen.getByLabelText("意见内容")).toBeVisible();
+  });
+
+  it("submits feedback online with the current player and level", async () => {
+    const user = await startGame();
+
+    await user.click(screen.getByRole("button", { name: "意见栏" }));
+    await user.type(screen.getByLabelText("意见内容"), "第五关可以再加一点提示");
+    await user.click(screen.getByRole("button", { name: "提交意见" }));
+
+    expect(submitOnlineFeedback).toHaveBeenCalledWith(
+      { url: "https://example.supabase.co", anonKey: "public-key" },
+      expect.objectContaining({
+        nickname: "PlayerOne",
+        difficulty: "easy",
+        level: 1,
+        message: "第五关可以再加一点提示",
+      }),
+    );
+    expect(screen.getByText("已收到，后面会按玩家反馈继续改。")).toBeVisible();
   });
 
   it("limits hints to three times in one round", async () => {

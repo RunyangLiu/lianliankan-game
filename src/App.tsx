@@ -36,6 +36,7 @@ import {
   getOnlineLeaderboardConfig,
   submitOnlineLeaderboardEntry,
 } from "./onlineLeaderboard";
+import { submitOnlineFeedback } from "./onlineFeedback";
 import { playMatchSound, setBackgroundMusicQuiet, startBackgroundMusic, stopBackgroundMusic } from "./sound";
 
 type BannerTone = "neutral" | "good" | "warn";
@@ -512,7 +513,7 @@ export function App({
     setFeedbackMessage("");
   }
 
-  function handleFeedbackSubmit() {
+  async function handleFeedbackSubmit() {
     const text = feedbackText.trim();
 
     if (!text) {
@@ -520,7 +521,22 @@ export function App({
       return;
     }
 
-    saveFeedbackText(text);
+    if (onlineLeaderboardConfig) {
+      try {
+        await submitOnlineFeedback(onlineLeaderboardConfig, {
+          nickname: playerName,
+          difficulty: difficulty.id,
+          level: difficulty.level,
+          message: text,
+          createdAt: new Date().toISOString(),
+        });
+      } catch {
+        saveFeedbackText(text);
+      }
+    } else {
+      saveFeedbackText(text);
+    }
+
     setFeedbackText("");
     setFeedbackMessage("已收到，后面会按玩家反馈继续改。");
   }

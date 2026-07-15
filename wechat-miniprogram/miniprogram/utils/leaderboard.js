@@ -4,6 +4,7 @@ const config = {
 };
 
 const scoresTable = "lianliankan_scores";
+const feedbackTable = "lianliankan_feedback";
 const leaderboardStorageKey = "lianliankan-leaderboards-v1";
 const nicknameStorageKey = "guoquduiduixiao-player-nickname-v1";
 const resetStorageKey = "guoquduiduixiao-user-data-reset-v1";
@@ -121,6 +122,10 @@ function getTableUrl(query = "") {
   return `${config.url}/rest/v1/${scoresTable}${query}`;
 }
 
+function getFeedbackTableUrl() {
+  return `${config.url}/rest/v1/${feedbackTable}`;
+}
+
 function rowToEntry(row) {
   return {
     nickname: row.nickname,
@@ -183,6 +188,31 @@ async function submitOnlineLeaderboardEntry(difficultyId, entry) {
   return fetchOnlineLeaderboards();
 }
 
+async function submitOnlineFeedback(entry) {
+  const nicknameCheck = validateNickname(entry.nickname);
+  if (!nicknameCheck.ok) {
+    throw new Error(nicknameCheck.message);
+  }
+
+  const message = String(entry.message || "").trim();
+  if (!message) {
+    throw new Error("意见内容不能为空");
+  }
+
+  await request({
+    url: getFeedbackTableUrl(),
+    method: "POST",
+    data: {
+      nickname: String(entry.nickname || "").trim(),
+      nickname_key: normalizeNickname(entry.nickname),
+      difficulty: entry.difficulty,
+      level: entry.level,
+      message,
+      created_at: entry.createdAt,
+    },
+  });
+}
+
 module.exports = {
   clearStoredUserData,
   createEmptyLeaderboards,
@@ -190,5 +220,6 @@ module.exports = {
   isNicknameTaken,
   normalizeNickname,
   validateNickname,
+  submitOnlineFeedback,
   submitOnlineLeaderboardEntry,
 };

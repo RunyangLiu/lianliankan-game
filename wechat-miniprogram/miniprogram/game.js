@@ -1,5 +1,6 @@
 const game = require("./utils/game");
 const leaderboard = require("./utils/leaderboard");
+const leaderboardDisplay = require("./utils/leaderboardDisplay");
 
 const canvas = wx.createCanvas();
 const ctx = canvas.getContext("2d");
@@ -17,6 +18,7 @@ const loadingDurationMs = 3000;
 const nicknameStorageKey = "guoquduiduixiao-player-nickname-v1";
 const backgroundMusicStorageKey = "guoquduiduixiao-background-music-v1";
 const soundEffectsStorageKey = "guoquduiduixiao-sound-effects-v1";
+const feedbackStorageKey = "guoquduiduixiao-feedback-list-v1";
 const palette = ["#f6d7e5", "#d8ecff", "#dbf2df", "#fff1cc", "#e5dcfb", "#ffdccc", "#d7eff0", "#ffe1d6"];
 const praiseWords = ["好", "棒", "牛", "完美", "神了", "绝了", "太酷了"];
 const praiseColors = ["#ff2f7d", "#16a34a", "#0284c7", "#f97316", "#7c3aed"];
@@ -64,6 +66,7 @@ let praisePop = null;
 let praiseIndex = 0;
 let praiseTimer = null;
 let userDataCleared = false;
+let completionPanel = null;
 
 const musicBeatSeconds = 0.3;
 const musicMelodySections = [
@@ -123,8 +126,59 @@ function saveNickname(nextNickname) {
   }
 }
 
+function saveLocalFeedback(text) {
+  try {
+    const raw = wx.getStorageSync(feedbackStorageKey);
+    const entries = raw ? JSON.parse(raw) : [];
+    entries.push({
+      nickname,
+      difficulty: difficulty.id,
+      level: difficulty.level,
+      message: String(text || "").trim(),
+      createdAt: new Date().toISOString(),
+    });
+    wx.setStorageSync(feedbackStorageKey, JSON.stringify(entries));
+  } catch (error) {
+    // 本地保存失败时只提示玩家，不影响当前对局。
+  }
+}
+
 function validateNickname(nextNickname) {
   return leaderboard.validateNickname(nextNickname);
+}
+
+function askFeedback() {
+  wx.showModal({
+    title: "意见栏",
+    editable: true,
+    placeholderText: "写下想改进的地方",
+    async success(response) {
+      if (!response.confirm) {
+        return;
+      }
+
+      const message = String(response.content || "").trim().slice(0, 200);
+
+      if (!message) {
+        wx.showToast({ title: "先写一点内容再提交", icon: "none" });
+        return;
+      }
+
+      try {
+        await leaderboard.submitOnlineFeedback({
+          nickname,
+          difficulty: difficulty.id,
+          level: difficulty.level,
+          message,
+          createdAt: new Date().toISOString(),
+        });
+        wx.showToast({ title: "意见已提交", icon: "success" });
+      } catch (error) {
+        saveLocalFeedback(message);
+        wx.showToast({ title: "网络不稳，已本地保存", icon: "none" });
+      }
+    },
+  });
 }
 
 function getMusicContext() {
@@ -456,7 +510,7 @@ function addTarget(id, rect, data) {
 }
 
 function hitTarget(x, y) {
-  return clickTargets.find((target) => x >= target.x && x <= target.x + target.w && y >= target.y && y <= target.y + target.h);
+  return [...clickTargets].reverse().find((target) => x >= target.x && x <= target.x + target.w && y >= target.y && y <= target.y + target.h);
 }
 
 function roundedRect(x, y, w, h, r) {
@@ -576,6 +630,74 @@ function drawSettingsModal() {
     color: soundEffectsEnabled ? "#15803d" : "#64748b",
   });
   addTarget("toggle-sfx", { x: x + 18, y: y + 132, w: modalW - 36, h: 48 });
+}
+
+function drawCompletionModal() {
+  if (!completionPanel) {
+    return;
+  }
+
+  const rows = leaderboardDisplay.buildLeaderboardRows(getActiveLeaderboard(), 5);
+  const modalW = Math.min(width - 30, 360);
+  const modalH = Math.min(height - 30, 420);
+  const x = (width - modalW) / 2;
+  const y = (height - modalH) / 2;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(14,25,36,0.45)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+
+  drawCard(x, y, modalW, modalH);
+  drawText(`${difficulty.label}通关`, x + 18, y + 36, { size: 22, color: "#0f5f9e", weight: 900 });
+  drawButton("×", x + modalW - 54, y + 12, 38, 38, {
+    fillStart: "#fff7d6",
+    fillEnd: "#fde68a",
+    color: "#b45309",
+    size: 20,
+  });
+  addTarget("completion-close", { x: x + modalW - 54, y: y + 12, w: 38, h: 38 });
+
+  drawText(`你的成绩：${formatTime(completionPanel.seconds)}  ${completionPanel.moves}步`, x + 18, y + 72, {
+    size: 14,
+    color: "#0b5f58",
+    weight: 850,
+  });
+
+  const listX = x + 14;
+  const listY = y + 96;
+  const listW = modalW - 28;
+  const listH = modalH - 156;
+  drawCard(listX, listY, listW, listH);
+  drawText(`${difficulty.label}排行榜`, listX + 14, listY + 26, { size: 16, color: "#0f5f9e", weight: 900 });
+  drawText(leaderboardStatus, listX + listW - 14, listY + 26, { size: 12, align: "right", color: "#0b5f58", weight: 900 });
+
+  if (rows.length === 0) {
+    drawText("暂无排行", listX + listW / 2, listY + 70, { size: 14, color: "#8a96a3", align: "center" });
+  } else {
+    rows.forEach((row, index) => {
+      const rowY = listY + 52 + index * 44;
+      drawButton(`${row.rank}`, listX + 12, rowY, 28, 28, {
+        fillStart: "#ffdd57",
+        fillEnd: "#ff9f1c",
+        color: "#fff",
+        size: 13,
+      });
+      drawText(row.nickname, listX + 52, rowY + 20, { size: 14, weight: 850 });
+      drawText(row.time, listX + listW - 84, rowY + 20, { size: 13, color: "#0b5f58", weight: 850 });
+      drawText(row.moves, listX + listW - 14, rowY + 20, { size: 12, color: "#8a96a3", align: "right", weight: 850 });
+    });
+  }
+
+  const buttonLabel = completionPanel.isFinalLevel ? "再玩一局" : "进入下一关";
+  drawButton(buttonLabel, x + 18, y + modalH - 58, modalW - 36, 42, {
+    fillStart: "#fff176",
+    fillEnd: "#ff9f1c",
+    color: "#fff",
+    textStroke: "rgba(124,45,18,0.35)",
+    textStrokeWidth: 3,
+  });
+  addTarget("completion-next", { x: x + 18, y: y + modalH - 58, w: modalW - 36, h: 42 });
 }
 
 function drawDifficultyButtons(y) {
@@ -701,9 +823,10 @@ function drawLoading() {
 
   drawText("✿", width * 0.45, height * 0.71, { size: 30, color: "#58bdf5", align: "center" });
   drawText("✿", width * 0.62, height * 0.88, { size: 35, color: "#74c0fc", align: "center" });
-  drawText("抵制不良游戏，拒绝盗版游戏", width / 2, height - 58, { size: 11, color: "#286050", align: "center", weight: 850 });
-  drawText("注意自我保护，谨防受骗上当", width / 2, height - 42, { size: 11, color: "#286050", align: "center", weight: 850 });
-  drawText("适度游戏益脑，沉迷游戏伤身", width / 2, height - 26, { size: 11, color: "#286050", align: "center", weight: 850 });
+  drawText("抵制不良游戏，拒绝盗版游戏", width / 2, height - 72, { size: 11, color: "#286050", align: "center", weight: 850 });
+  drawText("注意自我保护，谨防受骗上当", width / 2, height - 56, { size: 11, color: "#286050", align: "center", weight: 850 });
+  drawText("适度游戏益脑，沉迷游戏伤身", width / 2, height - 40, { size: 11, color: "#286050", align: "center", weight: 850 });
+  drawText("合理安排时间，享受健康生活", width / 2, height - 24, { size: 11, color: "#286050", align: "center", weight: 850 });
 
   const startW = Math.min(width * 0.72, 300);
   const startX = (width - startW) / 2;
@@ -940,6 +1063,13 @@ function drawControls(y) {
     });
     addTarget(button[0], { x: bx, y: by, w: buttonW, h: 28 });
   });
+  drawButton("意见", x + 16, y + 140, w - 32, 28, {
+    size: 13,
+    fillStart: "#fbcfe8",
+    fillEnd: "#f472b6",
+    color: "#831843",
+  });
+  addTarget("feedback", { x: x + 16, y: y + 140, w: w - 32, h: 28 });
 }
 
 function drawGame() {
@@ -978,6 +1108,7 @@ function draw() {
   ctx.fillRect(0, 0, width, height);
 
   drawGame();
+  drawCompletionModal();
   drawSettingsModal();
 }
 
@@ -1172,27 +1303,13 @@ function startNextLevel() {
   showShiftRuleIfNeeded();
 }
 
-function formatLeaderboardRows(maxRows = 5) {
-  const rows = getActiveLeaderboard().slice(0, maxRows);
-
-  if (rows.length === 0) {
-    return "暂无排行";
-  }
-
-  return rows.map((entry, index) => `${index + 1}. ${entry.nickname}  ${formatTime(entry.seconds)}  ${entry.moves}步`).join("\n");
-}
-
 function showCompletionLeaderboard(finalSeconds, finalMoves) {
-  const hasNextLevel = levelIndex < game.levelList.length - 1;
-  const nextText = hasNextLevel ? `关闭后进入${game.levelList[levelIndex + 1].label}` : "关闭后继续挑战最后一关";
-  wx.showModal({
-    title: `${difficulty.label}通关`,
-    content: `你的成绩：${formatTime(finalSeconds)}  ${finalMoves}步\n\n${difficulty.label}排行榜\n${formatLeaderboardRows(5)}\n\n${nextText}`,
-    showCancel: false,
-    success() {
-      startNextLevel();
-    },
-  });
+  completionPanel = {
+    seconds: finalSeconds,
+    moves: finalMoves,
+    isFinalLevel: levelIndex >= game.levelList.length - 1,
+  };
+  draw();
 }
 
 function showDeadlockModal() {
@@ -1341,6 +1458,21 @@ wx.onTouchStart((event) => {
     return;
   }
 
+  if (completionPanel) {
+    if (target.id === "completion-close" || target.id === "completion-next") {
+      const isFinalLevel = completionPanel.isFinalLevel;
+      completionPanel = null;
+      draw();
+      if (!isFinalLevel) {
+        startNextLevel();
+      } else {
+        resetRound(game.levelList[levelIndex]);
+        startTimer();
+      }
+    }
+    return;
+  }
+
   if (settingsOpen) {
     if (target.id === "settings-close") {
       settingsOpen = false;
@@ -1382,6 +1514,8 @@ wx.onTouchStart((event) => {
   } else if (target.id === "restart") {
     resetRound(difficulty);
     startTimer();
+  } else if (target.id === "feedback") {
+    askFeedback();
   }
 });
 

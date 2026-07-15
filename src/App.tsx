@@ -37,6 +37,13 @@ import {
   submitOnlineLeaderboardEntry,
 } from "./onlineLeaderboard";
 import { submitOnlineFeedback } from "./onlineFeedback";
+import {
+  calculateCompletionRating,
+  getChallengeLevel,
+  getCompletionTitle,
+  nextComboAfterMatch,
+  type CompletionRating,
+} from "./progression";
 import { playMatchSound, setBackgroundMusicQuiet, startBackgroundMusic, stopBackgroundMusic } from "./sound";
 
 type BannerTone = "neutral" | "good" | "warn";
@@ -71,7 +78,8 @@ const soundEffectsStorageKey = "guoquduiduixiao-sound-effects-v1";
 const feedbackPromptedStorageKey = "guoquduiduixiao-feedback-prompted-v1";
 const feedbackStorageKey = "guoquduiduixiao-feedback-list-v1";
 
-type GamePhase = "loading" | "nickname" | "playing";
+type GamePhase = "loading" | "nickname" | "map" | "playing";
+type PlayMode = "classic" | "challenge";
 
 type LeaderboardStatus = "local" | "loading" | "online" | "error";
 
@@ -183,6 +191,11 @@ export function App({
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [playMode, setPlayMode] = useState<PlayMode>("classic");
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  const [hintsUsed, setHintsUsed] = useState(0);
+  const [completionRating, setCompletionRating] = useState<CompletionRating | null>(null);
 
   const clearTimerRef = useRef<number | null>(null);
   const hintTimerRef = useRef<number | null>(null);
@@ -352,6 +365,10 @@ export function App({
     setMoves(0);
     setSeconds(0);
     setHintsRemaining(maxHintsPerRound);
+    setCombo(0);
+    setMaxCombo(0);
+    setHintsUsed(0);
+    setCompletionRating(null);
     setCompletionModalOpen(false);
     setDeadlockModalOpen(false);
     setShiftRuleLevel(null);
@@ -372,7 +389,7 @@ export function App({
       setSavedNickname(currentNickname);
       setNicknameInput(currentNickname);
       setPlayerName(currentNickname);
-      void handleStartGame(difficulty, currentNickname);
+      setPhase("map");
       return;
     }
 
@@ -417,10 +434,10 @@ export function App({
     setPlayerName(nextName);
     setNicknameInput(nextName);
     setSetupError("");
-    await handleStartGame(difficulty, nextName);
+    setPhase("map");
   }
 
-  async function handleStartGame(nextDifficulty: LevelConfig = difficulty, forcedName?: string) {
+  async function handleStartGame(nextDifficulty: LevelConfig = difficulty, forcedName?: string, nextPlayMode: PlayMode = "classic") {
     const nextName = (forcedName || playerName || savedNickname || nicknameInput).trim();
     const nicknameCheck = validateNickname(nextName);
 
@@ -456,6 +473,7 @@ export function App({
     setSavedNickname(nextName);
     setPlayerName(nextName);
     setSetupError("");
+    setPlayMode(nextPlayMode);
     setDifficulty(nextDifficulty);
     setLevelIndex(nextDifficulty.level - 1);
     if (backgroundMusicEnabled) {
@@ -467,6 +485,10 @@ export function App({
     if (nextDifficulty.shiftMode !== "none") {
       setShiftRuleLevel(nextDifficulty);
     }
+  }
+
+  function handleChallengeStart() {
+    void handleStartGame(getChallengeLevel(levelList), undefined, "challenge");
   }
 
   async function recordCompletion(finalSeconds: number, finalMoves: number) {
@@ -542,6 +564,13 @@ export function App({
   }
 
   function handleNextLevel() {
+    if (playMode === "challenge") {
+      setCompletionModalOpen(false);
+      setPhase("map");
+      void setBackgroundMusicQuiet(false);
+      return;
+    }
+
     const nextLevel = getNextLevel();
     const shouldPromptForFeedback = difficulty.level === 5 && !hasPromptedForFeedback();
 
@@ -592,6 +621,7 @@ export function App({
       setSelectedCell(cell);
       setHintCells(null);
       setConnectPath(null);
+      setCombo(0);
       setBanner({ text: "换一个相同图案试试", tone: "warn" });
       return;
     }
@@ -601,6 +631,7 @@ export function App({
     if (!matchedPath) {
       setSelectedCell(cell);
       setConnectPath(null);
+      setCombo(0);
       setBanner({ text: "这条路还不通", tone: "warn" });
       return;
     }
@@ -608,11 +639,15 @@ export function App({
     const removedBoard = removePair(board, selectedCell, cell);
     const nextBoard = applyShiftAfterRemove(removedBoard, [selectedCell, cell], difficulty.shiftMode);
     const finalMoves = moves + 1;
+    const nextCombo = nextComboAfterMatch(combo);
+    const nextMaxCombo = Math.max(maxCombo, nextCombo);
     setMoves((current) => current + 1);
+    setCombo(nextCombo);
+    setMaxCombo(nextMaxCombo);
     setClearingCells([selectedCell, cell]);
     setConnectPath(matchedPath);
     setHintCells(null);
-    setBanner({ text: "消掉一对", tone: "good" });
+    setBanner({ text: nextCombo >= 2 ? `${nextCombo}连击` : "消掉一对", tone: "good" });
     showPraisePop();
     setSelectedCell(null);
     if (soundEffectsEnabled) {
@@ -630,6 +665,16 @@ export function App({
       setConnectPath(null);
 
       if (countRemainingTiles(playableBoard) === 0) {
+        setCompletionRating(
+          calculateCompletionRating({
+            level: difficulty.level,
+            seconds,
+            moves: finalMoves,
+            hintsUsed,
+            maxCombo: nextMaxCombo,
+            challenge: playMode === "challenge",
+          }),
+        );
         void recordCompletion(seconds, finalMoves);
         setCompletionModalOpen(true);
         setBanner({ text: "通关了，查看排行榜", tone: "good" });
@@ -666,6 +711,8 @@ export function App({
     const nextHintsRemaining = hintsRemaining - 1;
     setHintCells([pair.start, pair.end]);
     setHintsRemaining(nextHintsRemaining);
+    setHintsUsed((current) => current + 1);
+    setCombo(0);
     setBanner({ text: nextHintsRemaining === 0 ? "提示已用完" : "提示已显示", tone: "neutral" });
 
     if (hintTimerRef.current) {
@@ -703,6 +750,7 @@ export function App({
     setSelectedCell(null);
     setHintCells(null);
     setConnectPath(null);
+    setCombo(0);
     setBanner({ text: difficulty.level >= 5 ? "已按当前进度刷新" : "已重新整理", tone: "neutral" });
   }
 
@@ -773,6 +821,21 @@ export function App({
     );
   }
 
+  if (phase === "map") {
+    return (
+      <>
+        <LevelMap
+          playerName={playerName}
+          levels={levelList}
+          onStartLevel={(level) => void handleStartGame(level)}
+          onChallenge={handleChallengeStart}
+          onSettings={() => setSettingsOpen(true)}
+        />
+        {settingsDialog}
+      </>
+    );
+  }
+
   return (
     <>
     <main className="app-shell">
@@ -780,6 +843,7 @@ export function App({
         <div className="title-block">
           <p className="eyebrow">果趣对对消 · {difficulty.subtitle}</p>
           <h1>{difficulty.label}</h1>
+          {playMode === "challenge" ? <span className="mode-pill">挑战模式</span> : null}
         </div>
 
         <button className="settings-button in-game corner-left" type="button" aria-label="设置" onClick={() => setSettingsOpen(true)}>
@@ -798,6 +862,10 @@ export function App({
           <div className="stat-chip">
             <span>剩余</span>
             <strong>{remainingPairs} 对</strong>
+          </div>
+          <div className="stat-chip">
+            <span>连击</span>
+            <strong>{combo}</strong>
           </div>
         </div>
 
@@ -888,6 +956,12 @@ export function App({
             <span>玩家</span>
             <strong>{playerName}</strong>
           </div>
+          {playMode === "challenge" ? (
+            <div className="player-card challenge-goal">
+              <span>目标三星</span>
+              <strong>少提示 · 高连击</strong>
+            </div>
+          ) : null}
 
           <div className="controls">
             <button
@@ -928,6 +1002,10 @@ export function App({
       title={`${difficulty.label}排行榜`}
       status={leaderboardStatus}
       isFinalLevel={levelIndex >= levelList.length - 1}
+      rating={completionRating}
+      maxCombo={maxCombo}
+      hintsUsed={hintsUsed}
+      playMode={playMode}
       onClose={handleNextLevel}
     />
     <DeadlockDialog open={deadlockModalOpen} onRefresh={handleShuffle} />
@@ -942,6 +1020,58 @@ export function App({
     />
     {settingsDialog}
     </>
+  );
+}
+
+function LevelMap({
+  playerName,
+  levels,
+  onStartLevel,
+  onChallenge,
+  onSettings,
+}: {
+  playerName: string;
+  levels: LevelConfig[];
+  onStartLevel: (level: LevelConfig) => void;
+  onChallenge: () => void;
+  onSettings: () => void;
+}) {
+  return (
+    <main className="app-shell level-map-shell">
+      <button className="settings-button loading-settings" type="button" aria-label="设置" onClick={onSettings}>
+        <Settings aria-hidden="true" size={22} />
+      </button>
+      <section className="level-map-hero">
+        <p className="eyebrow">玩家：{playerName}</p>
+        <h1>关卡地图</h1>
+        <p>选择普通关卡慢慢推进，或者直接进入挑战模式冲三星。</p>
+      </section>
+      <section className="challenge-card" aria-label="挑战模式">
+        <div>
+          <span>限时目标</span>
+          <strong>挑战模式</strong>
+          <p>从移动关卡开始，目标三星，少提示、高连击会拿到更高评价。</p>
+        </div>
+        <button className="start-button" type="button" onClick={onChallenge}>
+          挑战模式
+        </button>
+      </section>
+      <section className="level-map-grid" aria-label="关卡列表">
+        {levels.map((level) => (
+          <button
+            key={`${level.level}-${level.subtitle}`}
+            className="level-node"
+            type="button"
+            aria-label={`开始第${level.level}关`}
+            onClick={() => onStartLevel(level)}
+          >
+            <span>第{level.level}关</span>
+            <strong>{level.subtitle}</strong>
+            <em>开始第{level.level}关</em>
+          </button>
+        ))}
+      </section>
+    </main>
   );
 }
 
@@ -1093,6 +1223,10 @@ function CompletionDialog({
   title,
   status,
   isFinalLevel,
+  rating,
+  maxCombo,
+  hintsUsed,
+  playMode,
   onClose,
 }: {
   open: boolean;
@@ -1100,6 +1234,10 @@ function CompletionDialog({
   title: string;
   status: LeaderboardStatus;
   isFinalLevel: boolean;
+  rating: CompletionRating | null;
+  maxCombo: number;
+  hintsUsed: number;
+  playMode: PlayMode;
   onClose: () => void;
 }) {
   if (!open) {
@@ -1112,9 +1250,24 @@ function CompletionDialog({
         <div className="completion-hero" aria-hidden="true">
           🍉 🏆 🍍
         </div>
+        {rating ? (
+          <section className="completion-rating" aria-label="通关评价">
+            <h2>{getCompletionTitle(rating.stars)}</h2>
+            <div className="star-row" aria-label={`${rating.stars}星`}>
+              {Array.from({ length: 3 }, (_, index) => (
+                <span key={index} className={index < rating.stars ? "is-lit" : ""}>
+                  ★
+                </span>
+              ))}
+            </div>
+            <p>
+              最高连击 {maxCombo} · 使用提示 {hintsUsed} 次
+            </p>
+          </section>
+        ) : null}
         <LeaderboardPanel entries={entries} title={title} status={status} />
         <button className="start-button" type="button" onClick={onClose}>
-          {isFinalLevel ? "再玩一局" : "进入下一关"}
+          {playMode === "challenge" ? "返回地图" : isFinalLevel ? "再玩一局" : "进入下一关"}
         </button>
       </section>
     </div>

@@ -59,6 +59,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
     await user.type(screen.getByLabelText("昵称"), name);
     await user.click(screen.getByRole("button", { name: "确认昵称" }));
+    await user.click(await screen.findByRole("button", { name: "开始第1关" }));
     return user;
   }
 
@@ -127,6 +128,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
     await user.type(screen.getByLabelText("昵称"), "FruitNew1");
     await user.click(screen.getByRole("button", { name: "确认昵称" }));
+    await user.click(await screen.findByRole("button", { name: "开始第1关" }));
 
     expect(screen.getByRole("heading", { name: "第1关" })).toBeVisible();
     expect(window.localStorage.getItem("guoquduiduixiao-player-nickname-v1")).toBe("FruitNew1");
@@ -135,7 +137,7 @@ describe("App", () => {
     render(<App loadingMs={0} />);
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
 
-    expect(screen.getByRole("heading", { name: "第1关" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "关卡地图" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "输入昵称" })).not.toBeInTheDocument();
   });
 
@@ -156,8 +158,34 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
 
-    expect(screen.getByRole("heading", { name: "第1关" })).toBeVisible();
-    expect(screen.getAllByText("PlayerOne").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "关卡地图" })).toBeVisible();
+    expect(screen.getByText(/PlayerOne/)).toBeVisible();
+  });
+
+  it("shows the level map after nickname confirmation", async () => {
+    const user = userEvent.setup();
+    render(<App loadingMs={0} />);
+
+    await user.click(screen.getByRole("button", { name: "开始游戏" }));
+    await user.type(screen.getByLabelText("昵称"), "MapUser1");
+    await user.click(screen.getByRole("button", { name: "确认昵称" }));
+
+    expect(screen.getByRole("heading", { name: "关卡地图" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "开始第1关" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "挑战模式" })).toBeVisible();
+  });
+
+  it("starts challenge mode from the level map", async () => {
+    const user = userEvent.setup();
+    render(<App loadingMs={0} />);
+
+    await user.click(screen.getByRole("button", { name: "开始游戏" }));
+    await user.type(screen.getByLabelText("昵称"), "Challenge1");
+    await user.click(screen.getByRole("button", { name: "确认昵称" }));
+    await user.click(await screen.findByRole("button", { name: "挑战模式" }));
+
+    expect(screen.getByText("挑战模式")).toBeVisible();
+    expect(screen.getByText("目标三星")).toBeVisible();
   });
 
   it("opens settings and toggles the two sound switches", async () => {
@@ -301,6 +329,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "开始游戏" }));
     await user.type(screen.getByLabelText("昵称"), "MoveTest1");
     await user.click(screen.getByRole("button", { name: "确认昵称" }));
+    await user.click(await screen.findByRole("button", { name: "开始第5关" }));
 
     expect(screen.getByRole("dialog", { name: "关卡规则提示" })).toBeVisible();
     expect(screen.getByText(`${levelFive.label}规则`)).toBeVisible();

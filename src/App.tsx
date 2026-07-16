@@ -939,7 +939,7 @@ export function App({
                     onPointerDown={(event) => handleTilePointerDown(event, cell)}
                     onClick={() => handleCellClick(cell)}
                   >
-                    {tile ? <span aria-hidden="true">{tile.emoji}</span> : null}
+                    {tile ? <span aria-hidden="true">{tile.icon}</span> : null}
                   </button>
                 );
               }),

@@ -252,6 +252,21 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("9 对")).toBeVisible());
   });
 
+  it("ignores the synthetic click after a touch pointer input", async () => {
+    await startGame();
+
+    const pairLabel = tileDeck[0].label;
+    const pairButtons = screen.getAllByRole("button", { name: pairLabel });
+
+    fireEvent.pointerDown(pairButtons[0], { pointerType: "touch" });
+    fireEvent.click(pairButtons[0]);
+    fireEvent.pointerDown(pairButtons[1], { pointerType: "touch" });
+    fireEvent.click(pairButtons[1]);
+
+    expect(await screen.findByText("消掉一对")).toBeVisible();
+    await waitFor(() => expect(screen.getByText("9 对")).toBeVisible());
+  });
+
   it("opens the feedback dialog from the feedback button", async () => {
     const user = await startGame();
 

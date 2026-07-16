@@ -8,7 +8,6 @@ export type Board = Array<Array<string | null>>;
 export type TileInfo = {
   id: string;
   emoji: string;
-  icon: string;
   label: string;
 };
 
@@ -73,38 +72,38 @@ export function getShiftInstructionText(mode: ShiftMode): string {
 }
 
 export const tileDeck: TileInfo[] = [
-  { id: "strawberry", emoji: "🍓", icon: "莓", label: "草莓" },
-  { id: "orange", emoji: "🍊", icon: "橙", label: "橙子" },
-  { id: "lemon", emoji: "🍋", icon: "柠", label: "柠檬" },
-  { id: "watermelon", emoji: "🍉", icon: "瓜", label: "西瓜" },
-  { id: "grape", emoji: "🍇", icon: "葡", label: "葡萄" },
-  { id: "peach", emoji: "🍑", icon: "桃", label: "桃子" },
-  { id: "kiwi", emoji: "🥝", icon: "猕", label: "猕猴桃" },
-  { id: "pineapple", emoji: "🍍", icon: "菠", label: "菠萝" },
-  { id: "cherry", emoji: "🍒", icon: "樱", label: "樱桃" },
-  { id: "coconut", emoji: "🥥", icon: "椰", label: "椰子" },
-  { id: "apple", emoji: "🍎", icon: "苹", label: "苹果" },
-  { id: "pear", emoji: "🍐", icon: "梨", label: "梨" },
-  { id: "banana", emoji: "🍌", icon: "蕉", label: "香蕉" },
-  { id: "blueberry", emoji: "🫐", icon: "蓝", label: "蓝莓" },
-  { id: "green-apple", emoji: "🍏", icon: "青", label: "青苹果" },
-  { id: "mushroom", emoji: "🍄", icon: "菇", label: "蘑菇" },
-  { id: "corn", emoji: "🌽", icon: "玉", label: "玉米" },
-  { id: "carrot", emoji: "🥕", icon: "胡", label: "胡萝卜" },
-  { id: "cake", emoji: "🍰", icon: "糕", label: "蛋糕" },
-  { id: "donut", emoji: "🍩", icon: "甜", label: "甜甜圈" },
-  { id: "cookie", emoji: "🍪", icon: "饼", label: "饼干" },
-  { id: "cupcake", emoji: "🧁", icon: "杯", label: "纸杯蛋糕" },
-  { id: "popcorn", emoji: "🍿", icon: "米", label: "爆米花" },
-  { id: "burger", emoji: "🍔", icon: "堡", label: "汉堡" },
-  { id: "pizza", emoji: "🍕", icon: "披", label: "披萨" },
-  { id: "sushi", emoji: "🍣", icon: "寿", label: "寿司" },
-  { id: "shrimp", emoji: "🍤", icon: "虾", label: "炸虾" },
-  { id: "dice", emoji: "🎲", icon: "骰", label: "骰子" },
-  { id: "gamepad", emoji: "🎮", icon: "游", label: "游戏机" },
-  { id: "guitar", emoji: "🎸", icon: "琴", label: "吉他" },
-  { id: "plane", emoji: "✈️", icon: "机", label: "飞机" },
-  { id: "bike", emoji: "🚲", icon: "车", label: "自行车" },
+  { id: "strawberry", emoji: "🍓", label: "草莓" },
+  { id: "orange", emoji: "🍊", label: "橙子" },
+  { id: "lemon", emoji: "🍋", label: "柠檬" },
+  { id: "watermelon", emoji: "🍉", label: "西瓜" },
+  { id: "grape", emoji: "🍇", label: "葡萄" },
+  { id: "peach", emoji: "🍑", label: "桃子" },
+  { id: "kiwi", emoji: "🥝", label: "猕猴桃" },
+  { id: "pineapple", emoji: "🍍", label: "菠萝" },
+  { id: "cherry", emoji: "🍒", label: "樱桃" },
+  { id: "coconut", emoji: "🥥", label: "椰子" },
+  { id: "apple", emoji: "🍎", label: "苹果" },
+  { id: "pear", emoji: "🍐", label: "梨" },
+  { id: "banana", emoji: "🍌", label: "香蕉" },
+  { id: "blueberry", emoji: "🫐", label: "蓝莓" },
+  { id: "green-apple", emoji: "🍏", label: "青苹果" },
+  { id: "mushroom", emoji: "🍄", label: "蘑菇" },
+  { id: "corn", emoji: "🌽", label: "玉米" },
+  { id: "carrot", emoji: "🥕", label: "胡萝卜" },
+  { id: "cake", emoji: "🍰", label: "蛋糕" },
+  { id: "donut", emoji: "🍩", label: "甜甜圈" },
+  { id: "cookie", emoji: "🍪", label: "饼干" },
+  { id: "cupcake", emoji: "🧁", label: "纸杯蛋糕" },
+  { id: "popcorn", emoji: "🍿", label: "爆米花" },
+  { id: "burger", emoji: "🍔", label: "汉堡" },
+  { id: "pizza", emoji: "🍕", label: "披萨" },
+  { id: "sushi", emoji: "🍣", label: "寿司" },
+  { id: "shrimp", emoji: "🍤", label: "炸虾" },
+  { id: "dice", emoji: "🎲", label: "骰子" },
+  { id: "gamepad", emoji: "🎮", label: "游戏机" },
+  { id: "guitar", emoji: "🎸", label: "吉他" },
+  { id: "plane", emoji: "✈️", label: "飞机" },
+  { id: "bike", emoji: "🚲", label: "自行车" },
 ];
 
 const directions = [

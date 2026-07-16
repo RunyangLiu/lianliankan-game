@@ -201,6 +201,7 @@ export function App({
   const hintTimerRef = useRef<number | null>(null);
   const praiseTimerRef = useRef<number | null>(null);
   const praiseIndexRef = useRef(0);
+  const ignoreNextTileClickRef = useRef(false);
   const onlineLeaderboardConfig = useMemo(() => getOnlineLeaderboardConfig(), []);
 
   const remainingTiles = useMemo(() => countRemainingTiles(board), [board]);
@@ -587,7 +588,17 @@ export function App({
       return;
     }
 
+    ignoreNextTileClickRef.current = true;
     event.preventDefault();
+    handleCellClick(cell);
+  }
+
+  function handleTileClick(cell: Cell) {
+    if (ignoreNextTileClickRef.current) {
+      ignoreNextTileClickRef.current = false;
+      return;
+    }
+
     handleCellClick(cell);
   }
 
@@ -937,9 +948,9 @@ export function App({
                     disabled={!tile || Boolean(clearingCells) || isComplete}
                     type="button"
                     onPointerDown={(event) => handleTilePointerDown(event, cell)}
-                    onClick={() => handleCellClick(cell)}
+                    onClick={() => handleTileClick(cell)}
                   >
-                    {tile ? <span aria-hidden="true">{tile.icon}</span> : null}
+                    {tile ? <span aria-hidden="true">{tile.emoji}</span> : null}
                   </button>
                 );
               }),

@@ -35,3 +35,21 @@ describe("微信小程序意见线上提交", () => {
     expect(miniprogramLeaderboardSource).toContain("submitOnlineFeedback");
   });
 });
+
+describe("微信小程序新玩法同步", () => {
+  it("包含关卡地图、挑战模式、连击和三星评价", () => {
+    expect(miniprogramSource).toContain("关卡地图");
+    expect(miniprogramSource).toContain("挑战模式");
+    expect(miniprogramSource).toContain("连击");
+    expect(miniprogramSource).toContain("三星通关");
+    expect(miniprogramSource).toContain("calculateCompletionRating");
+  });
+});
+
+describe("微信小程序 iOS 审核机兼容", () => {
+  it("游戏流程使用兼容定时器，避免缺少全局 setTimeout 时启动失败", () => {
+    expect(miniprogramSource).toContain("safeSetTimeout");
+    expect(miniprogramSource).toContain("safeSetInterval");
+    expect(miniprogramSource).not.toMatch(/[^A-Za-z](setTimeout|setInterval|clearInterval)\(/);
+  });
+});

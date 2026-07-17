@@ -13,12 +13,55 @@ ctx.scale(dpr, dpr);
 
 const width = systemInfo.windowWidth;
 const height = systemInfo.windowHeight;
+const runtimeScope =
+  typeof GameGlobal !== "undefined"
+    ? GameGlobal
+    : typeof globalThis !== "undefined"
+      ? globalThis
+      : {};
+const rawSetTimeout =
+  typeof runtimeScope.setTimeout === "function"
+    ? runtimeScope.setTimeout.bind(runtimeScope)
+    : typeof wx !== "undefined" && typeof wx.setTimeout === "function"
+      ? wx.setTimeout.bind(wx)
+      : null;
+const rawClearTimeout =
+  typeof runtimeScope.clearTimeout === "function"
+    ? runtimeScope.clearTimeout.bind(runtimeScope)
+    : typeof wx !== "undefined" && typeof wx.clearTimeout === "function"
+      ? wx.clearTimeout.bind(wx)
+      : null;
+const rawSetInterval =
+  typeof runtimeScope.setInterval === "function"
+    ? runtimeScope.setInterval.bind(runtimeScope)
+    : typeof wx !== "undefined" && typeof wx.setInterval === "function"
+      ? wx.setInterval.bind(wx)
+      : null;
+const rawClearInterval =
+  typeof runtimeScope.clearInterval === "function"
+    ? runtimeScope.clearInterval.bind(runtimeScope)
+    : typeof wx !== "undefined" && typeof wx.clearInterval === "function"
+      ? wx.clearInterval.bind(wx)
+      : null;
+const rawRequestAnimationFrame =
+  typeof runtimeScope.requestAnimationFrame === "function"
+    ? runtimeScope.requestAnimationFrame.bind(runtimeScope)
+    : typeof wx !== "undefined" && typeof wx.requestAnimationFrame === "function"
+      ? wx.requestAnimationFrame.bind(wx)
+      : null;
+const rawCancelAnimationFrame =
+  typeof runtimeScope.cancelAnimationFrame === "function"
+    ? runtimeScope.cancelAnimationFrame.bind(runtimeScope)
+    : typeof wx !== "undefined" && typeof wx.cancelAnimationFrame === "function"
+      ? wx.cancelAnimationFrame.bind(wx)
+      : null;
 const maxHintsPerRound = 3;
 const loadingDurationMs = 3000;
 const nicknameStorageKey = "guoquduiduixiao-player-nickname-v1";
 const backgroundMusicStorageKey = "guoquduiduixiao-background-music-v1";
 const soundEffectsStorageKey = "guoquduiduixiao-sound-effects-v1";
 const feedbackStorageKey = "guoquduiduixiao-feedback-list-v1";
+const feedbackPromptedStorageKey = "guoquduiduixiao-feedback-prompted-v1";
 const palette = ["#f6d7e5", "#d8ecff", "#dbf2df", "#fff1cc", "#e5dcfb", "#ffdccc", "#d7eff0", "#ffe1d6"];
 const praiseWords = ["好", "棒", "牛", "完美", "神了", "绝了", "太酷了"];
 const praiseColors = ["#ff2f7d", "#16a34a", "#0284c7", "#f97316", "#7c3aed"];
@@ -35,6 +78,7 @@ const tileById = game.tileDeck.reduce((map, tile, index) => {
 let phase = "loading";
 let levelIndex = 0;
 let difficulty = game.levelList[levelIndex];
+let playMode = "classic";
 let board = game.createBoard(difficulty);
 let leaderboards = leaderboard.createEmptyLeaderboards();
 let leaderboardStatus = "同步中";
@@ -67,6 +111,10 @@ let praiseIndex = 0;
 let praiseTimer = null;
 let userDataCleared = false;
 let completionPanel = null;
+let combo = 0;
+let maxCombo = 0;
+let hintsUsed = 0;
+let completionRating = null;
 
 const musicBeatSeconds = 0.3;
 const musicMelodySections = [
@@ -85,6 +133,98 @@ const musicMelody = [].concat.apply([], musicMelodySections);
 const musicBass = [261.63, 329.63, 349.23, 392, 293.66, 349.23, 440, 392, 329.63, 293.66];
 const musicFullVolume = 0.18;
 const musicQuietVolume = 0.06;
+
+function safeSetTimeout(callback, delay) {
+  if (rawSetTimeout) {
+    return rawSetTimeout(callback, delay);
+  }
+
+  const frameTimer = {
+    cancelled: false,
+    frameId: null,
+  };
+  const startedAt = Date.now();
+  const wait = Math.max(0, Number(delay) || 0);
+
+  const tick = () => {
+    if (frameTimer.cancelled) {
+      return;
+    }
+
+    if (Date.now() - startedAt >= wait || !rawRequestAnimationFrame) {
+      callback();
+      return;
+    }
+
+    frameTimer.frameId = rawRequestAnimationFrame(tick);
+  };
+
+  if (rawRequestAnimationFrame) {
+    frameTimer.frameId = rawRequestAnimationFrame(tick);
+  } else {
+    callback();
+  }
+
+  return frameTimer;
+}
+
+function safeClearTimeout(timerId) {
+  if (!timerId) {
+    return;
+  }
+
+  if (rawClearTimeout && typeof timerId !== "object") {
+    rawClearTimeout(timerId);
+    return;
+  }
+
+  if (typeof timerId === "object") {
+    timerId.cancelled = true;
+
+    if (rawCancelAnimationFrame && timerId.frameId !== null) {
+      rawCancelAnimationFrame(timerId.frameId);
+    }
+  }
+}
+
+function safeSetInterval(callback, delay) {
+  if (rawSetInterval) {
+    return rawSetInterval(callback, delay);
+  }
+
+  const intervalTimer = {
+    cancelled: false,
+    timeoutId: null,
+  };
+
+  const tick = () => {
+    if (intervalTimer.cancelled) {
+      return;
+    }
+
+    callback();
+    intervalTimer.timeoutId = safeSetTimeout(tick, delay);
+  };
+
+  intervalTimer.timeoutId = safeSetTimeout(tick, delay);
+  return intervalTimer;
+}
+
+function safeClearInterval(timerId) {
+  if (!timerId) {
+    return;
+  }
+
+  if (rawClearInterval && typeof timerId !== "object") {
+    rawClearInterval(timerId);
+    return;
+  }
+
+  if (typeof timerId === "object") {
+    timerId.cancelled = true;
+    safeClearTimeout(timerId.timeoutId);
+  }
+}
 
 function loadSavedNickname() {
   try {
@@ -143,15 +283,35 @@ function saveLocalFeedback(text) {
   }
 }
 
+function hasPromptedForFeedback() {
+  try {
+    return wx.getStorageSync(feedbackPromptedStorageKey) === "true";
+  } catch (error) {
+    return false;
+  }
+}
+
+function markFeedbackPrompted() {
+  try {
+    wx.setStorageSync(feedbackPromptedStorageKey, "true");
+  } catch (error) {
+    // 意见提示标记失败不影响玩家继续游戏。
+  }
+}
+
 function validateNickname(nextNickname) {
   return leaderboard.validateNickname(nextNickname);
 }
 
-function askFeedback() {
+function askFeedback(isAutoPrompt = false) {
+  if (isAutoPrompt) {
+    markFeedbackPrompted();
+  }
+
   wx.showModal({
     title: "意见栏",
     editable: true,
-    placeholderText: "写下想改进的地方",
+    placeholderText: isAutoPrompt ? "玩到这里，可以顺手写一点意见" : "写下想改进的地方",
     async success(response) {
       if (!response.confirm) {
         return;
@@ -291,7 +451,7 @@ function startBackgroundMusic(volume = musicFullVolume) {
 
   nextMusicTime = context.currentTime + 0.05;
   scheduleMusicAhead(context);
-  musicTimer = setInterval(() => scheduleMusicAhead(context), 150);
+  musicTimer = safeSetInterval(() => scheduleMusicAhead(context), 150);
 }
 
 function setBackgroundMusicQuiet(isQuiet) {
@@ -317,7 +477,7 @@ function setBackgroundMusicQuiet(isQuiet) {
 
 function stopBackgroundMusic() {
   if (musicTimer) {
-    clearInterval(musicTimer);
+    safeClearInterval(musicTimer);
     musicTimer = null;
   }
 
@@ -454,13 +614,13 @@ function showPraisePop() {
   };
 
   if (praiseTimer) {
-    clearInterval(praiseTimer);
+    safeClearInterval(praiseTimer);
   }
 
-  praiseTimer = setInterval(() => {
+  praiseTimer = safeSetInterval(() => {
     if (!praisePop || Date.now() - praisePop.startedAt > 900) {
       praisePop = null;
-      clearInterval(praiseTimer);
+      safeClearInterval(praiseTimer);
       praiseTimer = null;
     }
 
@@ -493,6 +653,49 @@ function getActiveLeaderboard() {
 
 function getNextLevelIndex() {
   return Math.min(levelIndex + 1, game.levelList.length - 1);
+}
+
+function getChallengeLevelIndex() {
+  const challengeIndex = game.levelList.findIndex((level) => level.level >= 5);
+  return challengeIndex === -1 ? game.levelList.length - 1 : challengeIndex;
+}
+
+function getTargetSeconds(level, challenge) {
+  const base = 90 + level * 15;
+  return challenge ? Math.max(60, Math.floor(base * 0.78)) : base;
+}
+
+function getTargetMoves(level, challenge) {
+  const base = 34 + level * 6;
+  return challenge ? Math.max(24, Math.floor(base * 0.82)) : base;
+}
+
+function calculateCompletionRating(input) {
+  const targetSeconds = getTargetSeconds(input.level, input.challenge);
+  const targetMoves = getTargetMoves(input.level, input.challenge);
+  let stars = 1;
+
+  if (input.seconds <= targetSeconds && input.hintsUsed <= 1) {
+    stars = 2;
+  }
+
+  if (stars === 2 && input.moves <= targetMoves && input.maxCombo >= 3 && input.hintsUsed === 0) {
+    stars = 3;
+  }
+
+  return { stars, targetSeconds, targetMoves };
+}
+
+function getCompletionTitle(stars) {
+  if (stars >= 3) {
+    return "三星通关";
+  }
+
+  if (stars === 2) {
+    return "顺利通关";
+  }
+
+  return "继续加油";
 }
 
 function isShiftLevel(level) {
@@ -637,7 +840,7 @@ function drawCompletionModal() {
     return;
   }
 
-  const rows = leaderboardDisplay.buildLeaderboardRows(getActiveLeaderboard(), 5);
+  const rows = leaderboardDisplay.buildLeaderboardRows(getActiveLeaderboard(), 4);
   const modalW = Math.min(width - 30, 360);
   const modalH = Math.min(height - 30, 420);
   const x = (width - modalW) / 2;
@@ -649,7 +852,8 @@ function drawCompletionModal() {
   ctx.restore();
 
   drawCard(x, y, modalW, modalH);
-  drawText(`${difficulty.label}通关`, x + 18, y + 36, { size: 22, color: "#0f5f9e", weight: 900 });
+  const rating = completionPanel.rating || { stars: 1, targetSeconds: 0, targetMoves: 0 };
+  drawText(getCompletionTitle(rating.stars), x + 18, y + 34, { size: 22, color: "#0f5f9e", weight: 900 });
   drawButton("×", x + modalW - 54, y + 12, 38, 38, {
     fillStart: "#fff7d6",
     fillEnd: "#fde68a",
@@ -658,16 +862,32 @@ function drawCompletionModal() {
   });
   addTarget("completion-close", { x: x + modalW - 54, y: y + 12, w: 38, h: 38 });
 
-  drawText(`你的成绩：${formatTime(completionPanel.seconds)}  ${completionPanel.moves}步`, x + 18, y + 72, {
+  const starText = Array.from({ length: 3 }, (_, index) => (index < rating.stars ? "★" : "☆")).join("");
+  drawText(`${difficulty.label}${playMode === "challenge" ? " · 挑战模式" : ""}`, x + 18, y + 62, {
+    size: 13,
+    color: "#f97316",
+    weight: 900,
+  });
+  drawText(starText, x + 18, y + 92, {
+    size: 28,
+    color: "#f59e0b",
+    weight: 900,
+  });
+  drawText(`成绩 ${formatTime(completionPanel.seconds)}  ${completionPanel.moves}步`, x + 18, y + 120, {
     size: 14,
     color: "#0b5f58",
     weight: 850,
   });
+  drawText(`最高连击 ${completionPanel.maxCombo}  提示 ${completionPanel.hintsUsed} 次`, x + 18, y + 142, {
+    size: 13,
+    color: "#5f6d7a",
+    weight: 850,
+  });
 
   const listX = x + 14;
-  const listY = y + 96;
+  const listY = y + 158;
   const listW = modalW - 28;
-  const listH = modalH - 156;
+  const listH = modalH - 218;
   drawCard(listX, listY, listW, listH);
   drawText(`${difficulty.label}排行榜`, listX + 14, listY + 26, { size: 16, color: "#0f5f9e", weight: 900 });
   drawText(leaderboardStatus, listX + listW - 14, listY + 26, { size: 12, align: "right", color: "#0b5f58", weight: 900 });
@@ -676,7 +896,7 @@ function drawCompletionModal() {
     drawText("暂无排行", listX + listW / 2, listY + 70, { size: 14, color: "#8a96a3", align: "center" });
   } else {
     rows.forEach((row, index) => {
-      const rowY = listY + 52 + index * 44;
+      const rowY = listY + 48 + index * 34;
       drawButton(`${row.rank}`, listX + 12, rowY, 28, 28, {
         fillStart: "#ffdd57",
         fillEnd: "#ff9f1c",
@@ -689,7 +909,7 @@ function drawCompletionModal() {
     });
   }
 
-  const buttonLabel = completionPanel.isFinalLevel ? "再玩一局" : "进入下一关";
+  const buttonLabel = playMode === "challenge" ? "返回地图" : completionPanel.isFinalLevel ? "再玩一局" : "进入下一关";
   drawButton(buttonLabel, x + 18, y + modalH - 58, modalW - 36, 42, {
     fillStart: "#fff176",
     fillEnd: "#ff9f1c",
@@ -909,15 +1129,79 @@ function drawDifficultySelect() {
   });
 }
 
+function drawLevelMap() {
+  drawSkyField();
+  drawSettingsButton();
+  drawText(`玩家：${nickname}`, width - 18, 42, { size: 13, color: "#0b5f58", align: "right", weight: 900 });
+  drawText("关卡地图", width / 2, 82, {
+    size: 34,
+    color: "#0f5f9e",
+    align: "center",
+    weight: 900,
+    stroke: "rgba(255,255,255,0.92)",
+    strokeWidth: 5,
+  });
+  drawText("普通推进或挑战冲三星", width / 2, 110, { size: 14, color: "#286050", align: "center", weight: 850 });
+
+  const mapX = 18;
+  const mapW = width - 36;
+  const challengeY = 128;
+  drawButton("挑战模式", mapX, challengeY, mapW, 66, {
+    fillStart: "#fbcfe8",
+    fillEnd: "#fb7185",
+    color: "#ffffff",
+    textStroke: "rgba(131,24,67,0.36)",
+    textStrokeWidth: 4,
+    size: 22,
+  });
+  drawText("从第5关开始，目标三星，高连击少提示", width / 2, challengeY + 50, {
+    size: 12,
+    color: "#831843",
+    align: "center",
+    weight: 850,
+  });
+  addTarget("map-challenge", { x: mapX, y: challengeY, w: mapW, h: 66 });
+
+  const gap = 10;
+  const columns = 2;
+  const gridY = challengeY + 88;
+  const levelRows = Math.ceil(game.levelList.length / columns);
+  const buttonW = (mapW - gap) / columns;
+  const buttonH = Math.max(44, Math.min(62, (height - gridY - 24 - gap * (levelRows - 1)) / levelRows));
+
+  game.levelList.forEach((level, index) => {
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    const x = mapX + col * (buttonW + gap);
+    const y = gridY + row * (buttonH + gap);
+    const colors = difficultyColors[level.id] || difficultyColors.normal;
+    const label = `开始第${level.level}关`;
+    drawButton(label, x, y, buttonW, buttonH, {
+      fillStart: colors.fillStart,
+      fillEnd: colors.fillEnd,
+      color: colors.color,
+      size: 15,
+    });
+    drawText(level.subtitle, x + buttonW / 2, y + buttonH - 9, {
+      size: 10,
+      color: colors.color,
+      align: "center",
+      weight: 800,
+    });
+    addTarget("map-level", { x, y, w: buttonW, h: buttonH }, { levelIndex: index });
+  });
+}
+
 function drawStats() {
   const labels = [
     ["时间", formatTime(seconds)],
     ["步数", String(moves)],
     ["剩余", `${countRemainingPairs()} 对`],
+    ["连击", String(combo)],
   ];
   const gap = 8;
   const top = 104;
-  const statW = (width - 40 - gap * 2) / 3;
+  const statW = (width - 40 - gap * 3) / 4;
   labels.forEach((item, index) => {
     const x = 20 + index * (statW + gap);
     drawCard(x, top, statW, 52);
@@ -930,7 +1214,7 @@ function getBoardRect() {
   const cols = board[0] ? board[0].length : 1;
   const rows = board.length;
   const maxBoardW = width - 20;
-  const maxBoardH = height - 315;
+  const maxBoardH = height - 365;
   const cell = Math.floor(Math.min(maxBoardW / cols, maxBoardH / rows));
   const boardW = cell * cols;
   const boardH = cell * rows;
@@ -1042,7 +1326,7 @@ function drawBoard() {
 function drawControls(y) {
   const x = 20;
   const w = width - 40;
-  drawCard(x, y, w, 132);
+  drawCard(x, y, w, 176);
   drawText(banner, x + 16, y + 28, { size: 15, color: bannerTone === "good" ? "#16805f" : bannerTone === "warn" ? "#d97706" : "#5f6d7a", weight: 850 });
   drawText(`玩家：${nickname}`, x + 16, y + 56, { size: 13, color: "#5f6d7a", weight: 850 });
   const buttonW = (w - 44) / 2;
@@ -1082,6 +1366,16 @@ function drawGame() {
     stroke: "rgba(255,255,255,0.9)",
     strokeWidth: 3,
   });
+  if (playMode === "challenge") {
+    drawButton("挑战模式", width - 104, 34, 86, 28, {
+      fillStart: "#fbcfe8",
+      fillEnd: "#fb7185",
+      color: "#ffffff",
+      size: 12,
+      textStroke: "rgba(131,24,67,0.35)",
+      textStrokeWidth: 3,
+    });
+  }
   drawText(difficulty.subtitle || "把相同图案连起来", 70, 92, { size: 13, color: "#0b5f58", weight: 850 });
   drawStats();
   const controlsY = drawBoard();
@@ -1099,6 +1393,12 @@ function draw() {
 
   if (phase === "difficulty") {
     drawDifficultySelect();
+    drawSettingsModal();
+    return;
+  }
+
+  if (phase === "map") {
+    drawLevelMap();
     drawSettingsModal();
     return;
   }
@@ -1126,7 +1426,7 @@ async function loadLeaderboards() {
 
 function resetRound(nextDifficulty = difficulty) {
   if (praiseTimer) {
-    clearInterval(praiseTimer);
+    safeClearInterval(praiseTimer);
     praiseTimer = null;
   }
 
@@ -1140,6 +1440,10 @@ function resetRound(nextDifficulty = difficulty) {
   connectPath = [];
   praisePop = null;
   hintsRemaining = maxHintsPerRound;
+  combo = 0;
+  maxCombo = 0;
+  hintsUsed = 0;
+  completionRating = null;
   moves = 0;
   seconds = 0;
   if (phase === "playing") {
@@ -1162,9 +1466,9 @@ function showShiftRuleIfNeeded() {
 
 function startTimer() {
   if (timer) {
-    clearInterval(timer);
+    safeClearInterval(timer);
   }
-  timer = setInterval(() => {
+  timer = safeSetInterval(() => {
     seconds += 1;
     draw();
   }, 1000);
@@ -1172,7 +1476,7 @@ function startTimer() {
 
 function stopTimer() {
   if (timer) {
-    clearInterval(timer);
+    safeClearInterval(timer);
     timer = null;
   }
 }
@@ -1238,18 +1542,29 @@ function askNickname(onSaved, persist = true) {
 function enterGameFromLoading() {
   if (savedNickname) {
     nickname = savedNickname;
-    startGame();
+    showLevelMap();
     return;
   }
 
   askNickname(() => {
-    startGame();
+    showLevelMap();
   });
 }
 
-async function startGame() {
+function showLevelMap() {
+  stopTimer();
+  phase = "map";
+  completionPanel = null;
+  selectedCell = null;
+  hintCells = [];
+  connectPath = [];
+  setBackgroundMusicQuiet(false);
+  draw();
+}
+
+async function startGame(nextLevelIndex = 0, nextPlayMode = "classic") {
   if (!nickname) {
-    askNickname();
+    askNickname(() => showLevelMap());
     return;
   }
 
@@ -1257,7 +1572,7 @@ async function startGame() {
 
   if (!nicknameCheck.ok) {
     wx.showToast({ title: nicknameCheck.message, icon: "none" });
-    askNickname(() => startGame());
+    askNickname(() => showLevelMap());
     return;
   }
 
@@ -1275,7 +1590,7 @@ async function startGame() {
 
   if (!isSavedNickname && isNicknameTakenInAnyDifficulty(nickname)) {
     wx.showToast({ title: "当前昵称已存在，请修改", icon: "none" });
-    askNickname(() => startGame());
+    askNickname(() => showLevelMap());
     return;
   }
 
@@ -1283,10 +1598,12 @@ async function startGame() {
   startBackgroundMusic(musicQuietVolume);
   setBackgroundMusicQuiet(true);
   phase = "playing";
-  levelIndex = 0;
+  playMode = nextPlayMode;
+  levelIndex = Math.min(Math.max(nextLevelIndex, 0), game.levelList.length - 1);
   difficulty = game.levelList[levelIndex];
   resetRound(difficulty);
   startTimer();
+  showShiftRuleIfNeeded();
 }
 
 function startNextLevel() {
@@ -1298,6 +1615,7 @@ function startNextLevel() {
   }
 
   difficulty = nextDifficulty;
+  playMode = "classic";
   resetRound(nextDifficulty);
   startTimer();
   showShiftRuleIfNeeded();
@@ -1307,6 +1625,9 @@ function showCompletionLeaderboard(finalSeconds, finalMoves) {
   completionPanel = {
     seconds: finalSeconds,
     moves: finalMoves,
+    maxCombo,
+    hintsUsed,
+    rating: completionRating,
     isFinalLevel: levelIndex >= game.levelList.length - 1,
   };
   draw();
@@ -1347,10 +1668,18 @@ function handleCell(row, col) {
   }
 
   const selectedTileId = board[selectedCell.row][selectedCell.col];
+  if (!selectedTileId) {
+    selectedCell = cell;
+    connectPath = [];
+    draw();
+    return;
+  }
+
   if (selectedTileId !== tileId) {
     selectedCell = cell;
     hintCells = [];
     connectPath = [];
+    combo = 0;
     setBanner("换一个相同图案试试", "warn");
     return;
   }
@@ -1359,6 +1688,7 @@ function handleCell(row, col) {
   if (!matchedPath) {
     selectedCell = cell;
     connectPath = [];
+    combo = 0;
     setBanner("这条路还不通", "warn");
     return;
   }
@@ -1370,25 +1700,36 @@ function handleCell(row, col) {
     difficulty.shiftMode || "none",
   );
   const finalMoves = moves + 1;
+  const nextCombo = combo + 1;
+  combo = nextCombo;
+  maxCombo = Math.max(maxCombo, nextCombo);
   moves = finalMoves;
   clearingCells = [selectedCell, cell];
   connectPath = matchedPath;
   selectedCell = null;
   hintCells = [];
-  setBanner("消掉一对", "good");
+  setBanner(nextCombo >= 2 ? `${nextCombo}连击` : "消掉一对", "good");
   showPraisePop();
   if (soundEffectsEnabled) {
     wx.vibrateShort({ type: "light" });
     playMatchSound();
   }
 
-  setTimeout(() => {
+  safeSetTimeout(() => {
     board = isShiftLevel(difficulty) ? nextBoard : game.ensurePlayableBoard(nextBoard);
     clearingCells = [];
     connectPath = [];
 
     if (game.countRemainingTiles(board) === 0) {
       stopTimer();
+      completionRating = calculateCompletionRating({
+        level: difficulty.level,
+        seconds,
+        moves: finalMoves,
+        hintsUsed,
+        maxCombo,
+        challenge: playMode === "challenge",
+      });
       recordCompletion(seconds, finalMoves);
       setBackgroundMusicQuiet(false);
       setBanner("通关了，已进入排行榜", "good");
@@ -1428,27 +1769,40 @@ function useHint() {
 
   const pair = game.findAnyMatch(board);
   if (!pair) {
+    if (isShiftLevel(difficulty)) {
+      showDeadlockModal();
+      return;
+    }
     setBanner("暂时没有可连的对", "warn");
     return;
   }
 
   hintsRemaining -= 1;
+  hintsUsed += 1;
+  combo = 0;
   hintCells = [pair.start, pair.end];
   setBanner(hintsRemaining === 0 ? "提示已用完" : "提示已显示", hintsRemaining === 0 ? "warn" : "neutral");
-  setTimeout(() => {
+  safeSetTimeout(() => {
     hintCells = [];
     draw();
   }, 1400);
 }
 
 function shuffleBoard() {
-  board = isShiftLevel(difficulty)
+  const nextBoard = isShiftLevel(difficulty)
     ? game.shuffleBoardForShiftMode(board, difficulty.shiftMode)
     : game.shuffleBoard(board);
+  if (isShiftLevel(difficulty) && game.countRemainingTiles(nextBoard) > 0 && !game.findAnyMatch(nextBoard)) {
+    setBanner("当前无可消除块，请点击刷新", "warn");
+    return;
+  }
+
+  board = nextBoard;
   selectedCell = null;
   hintCells = [];
   connectPath = [];
-  setBanner("已重新整理");
+  combo = 0;
+  setBanner(isShiftLevel(difficulty) ? "已按当前进度刷新" : "已重新整理");
 }
 
 wx.onTouchStart((event) => {
@@ -1461,10 +1815,17 @@ wx.onTouchStart((event) => {
   if (completionPanel) {
     if (target.id === "completion-close" || target.id === "completion-next") {
       const isFinalLevel = completionPanel.isFinalLevel;
+      const shouldReturnMap = playMode === "challenge";
+      const shouldPromptForFeedback = !shouldReturnMap && difficulty.level === 5 && !hasPromptedForFeedback();
       completionPanel = null;
       draw();
-      if (!isFinalLevel) {
+      if (shouldReturnMap) {
+        showLevelMap();
+      } else if (!isFinalLevel) {
         startNextLevel();
+        if (shouldPromptForFeedback) {
+          askFeedback(true);
+        }
       } else {
         resetRound(game.levelList[levelIndex]);
         startTimer();
@@ -1505,6 +1866,10 @@ wx.onTouchStart((event) => {
     askNickname();
   } else if (target.id === "start") {
     startGame();
+  } else if (target.id === "map-level") {
+    startGame(target.levelIndex, "classic");
+  } else if (target.id === "map-challenge") {
+    startGame(getChallengeLevelIndex(), "challenge");
   } else if (target.id === "cell") {
     handleCell(target.row, target.col);
   } else if (target.id === "hint") {
@@ -1541,7 +1906,7 @@ if (typeof wx.onShow === "function") {
   });
 }
 
-loadingTimer = setInterval(() => {
+loadingTimer = safeSetInterval(() => {
   if (phase === "loading") {
     draw();
   }
